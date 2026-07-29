@@ -32,3 +32,20 @@ class StockMovement(Base):
     reason = Column(String, nullable=False)
     note = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class Procedure(Base):
+    __tablename__ = "procedures"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    code = Column(String, nullable=True)
+    active = Column(Boolean, nullable=False, default=True)
+
+
+class ProcedureSupply(Base):
+    __tablename__ = "procedure_supplies"
+
+    id = Column(Integer, primary_key=True, index=True)
+    procedure_id = Column(Integer, ForeignKey("procedures.id"), nullable=False)
+    item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
+    qty_per_procedure = Column(Numeric(12, 2), nullable=False)

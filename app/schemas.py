@@ -52,3 +52,28 @@ class Token(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+
+class ProcedureCreate(BaseModel):
+    name: str
+    code: Optional[str] = None
+
+
+class ProcedureOut(BaseModel):
+    id: int
+    name: str
+    code: Optional[str]
+    active: bool
+
+    class Config:
+        from_attributes = True
+
+
+class SupplyLine(BaseModel):
+    item_id: int
+    qty_per_procedure: Decimal
+
+
+class SupplyLineOut(BaseModel):
+    item_id: int
+    item_name: str
+    qty_per_procedure: Decimal
