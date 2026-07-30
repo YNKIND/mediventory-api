@@ -95,3 +95,41 @@ class AppointmentOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class AlertOut(BaseModel):
+    item_id: int
+    item_name: str
+    unit: str
+    stock_qty: Decimal
+    par_level: Decimal
+    level: str
+
+
+class ReorderLineOut(BaseModel):
+    item_id: int
+    item_name: str
+    unit: str
+    stock_qty: Decimal
+    par_level: Decimal
+    suggested_qty: Decimal
+
+
+class DashboardSummary(BaseModel):
+    total_items: int
+    low_count: int
+    critical_count: int
+    appointments_today: int
+    completed_today: int
+
+
+class MovementOut(BaseModel):
+    id: int
+    change_qty: Decimal
+    reason: str
+    note: Optional[str]
+    appointment_id: Optional[int]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

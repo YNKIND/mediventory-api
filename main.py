@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from app.routers import auth, items, procedures, appointments
+from app.routers import auth, items, procedures, appointments, insights
 
 app = FastAPI()
 
@@ -34,3 +34,4 @@ def read_root():
     return {"message": "Mediventory is alive"}
 
 app.include_router(appointments.router)
+app.include_router(insights.router)

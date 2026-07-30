@@ -74,3 +74,16 @@ def adjust_stock(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
     apply_movement(db, item, payload.change_qty, reason="correction", note=payload.note)
     return item
+
+@router.get("/{item_id}/movements", response_model=list[schemas.MovementOut])
+def item_movements(
+    item_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    item = db.query(models.Item).filter(models.Item.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    return db.query(models.StockMovement).filter(
+        models.StockMovement.item_id == item_id
+    ).order_by(models.StockMovement.created_at.desc()).all()
