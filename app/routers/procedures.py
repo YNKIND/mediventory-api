@@ -223,3 +223,56 @@ def procedure_stock_check(
         "ready": ready,
         "lines": lines,
     }
+
+@router.get("", response_model=list[schemas.ProcedureOut])
+def list_procedures(
+    include_inactive: bool = False,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    query = db.query(models.Procedure)
+    if not include_inactive:
+        query = query.filter(models.Procedure.active == True)
+    return query.order_by(models.Procedure.name).all()
+
+@router.delete("/{procedure_id}", response_model=schemas.ProcedureOut)
+def deactivate_procedure(
+    procedure_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    procedure = db.query(models.Procedure).filter(models.Procedure.id == procedure_id).first()
+    if not procedure:
+        raise HTTPException(status_code=404, detail="Procedure not found")
+    if not procedure.active:
+        raise HTTPException(status_code=400, detail="Procedure is already retired")
+
+    upcoming = db.query(models.Appointment).filter(
+        models.Appointment.procedure_id == procedure_id,
+        models.Appointment.status == "scheduled",
+    ).count()
+    if upcoming > 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{upcoming} scheduled appointment{'s' if upcoming != 1 else ''} still use this procedure. Complete or cancel them first.",
+        )
+
+    procedure.active = False
+    db.commit()
+    db.refresh(procedure)
+    return procedure
+
+
+@router.post("/{procedure_id}/restore", response_model=schemas.ProcedureOut)
+def restore_procedure(
+    procedure_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    procedure = db.query(models.Procedure).filter(models.Procedure.id == procedure_id).first()
+    if not procedure:
+        raise HTTPException(status_code=404, detail="Procedure not found")
+    procedure.active = True
+    db.commit()
+    db.refresh(procedure)
+    return procedure

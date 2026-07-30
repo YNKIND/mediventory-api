@@ -53,7 +53,7 @@ def get_reorder_list(
     items = db.query(models.Item).filter(models.Item.active == True).all()
     lines = []
     for item in items:
-        if stock_level(item) is None:
+        if stock_level(item.stock_qty, item.par_level) is None:
             continue
         if item.reorder_qty and item.reorder_qty > 0:
             suggested = item.reorder_qty

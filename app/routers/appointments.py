@@ -58,7 +58,8 @@ def complete_appointment(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found")
     if appt.status == "completed":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Appointment already completed")
-
+    if appt.status == "cancelled":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This appointment was cancelled")
     supplies = db.query(models.ProcedureSupply).filter(
         models.ProcedureSupply.procedure_id == appt.procedure_id
     ).all()
@@ -141,3 +142,53 @@ def uncomplete_appointment(
     db.commit()
     db.refresh(appt)
     return appt
+
+@router.post("/{appointment_id}/cancel", response_model=schemas.AppointmentOut)
+def cancel_appointment(
+    appointment_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    appt = db.query(models.Appointment).filter(models.Appointment.id == appointment_id).first()
+    if not appt:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found")
+    if appt.status == "completed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Undo this appointment first, then cancel it",
+        )
+    if appt.status == "cancelled":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Already cancelled")
+    appt.status = "cancelled"
+    db.commit()
+    db.refresh(appt)
+    return appt
+
+
+@router.delete("/{appointment_id}")
+def delete_appointment(
+    appointment_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    appt = db.query(models.Appointment).filter(models.Appointment.id == appointment_id).first()
+    if not appt:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found")
+    if appt.status == "completed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Undo this appointment before deleting it",
+        )
+
+    linked = db.query(models.StockMovement).filter(
+        models.StockMovement.appointment_id == appt.id
+    ).count()
+    if linked > 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"This appointment has {linked} stock movements in its history. Cancel it instead so the ledger stays intact.",
+        )
+
+    db.delete(appt)
+    db.commit()
+    return {"deleted": True}
