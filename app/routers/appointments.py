@@ -166,6 +166,7 @@ def cancel_appointment(
 
 
 @router.delete("/{appointment_id}")
+@router.delete("/{appointment_id}")
 def delete_appointment(
     appointment_id: int,
     db: Session = Depends(get_db),
@@ -177,18 +178,27 @@ def delete_appointment(
     if appt.status == "completed":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Undo this appointment before deleting it",
+            detail="Undo this appointment first, otherwise its supplies would stay deducted with nothing explaining why",
         )
 
-    linked = db.query(models.StockMovement).filter(
+    movements = db.query(models.StockMovement).filter(
         models.StockMovement.appointment_id == appt.id
-    ).count()
-    if linked > 0:
+    ).all()
+
+    net_by_item = {}
+    for mv in movements:
+        net_by_item[mv.item_id] = net_by_item.get(mv.item_id, Decimal("0")) + mv.change_qty
+    outstanding = {k: v for k, v in net_by_item.items() if v != 0}
+    if outstanding:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"This appointment has {linked} stock movements in its history. Cancel it instead so the ledger stays intact.",
+            detail="This appointment still has stock deducted against it. Undo it before deleting.",
         )
+
+    for mv in movements:
+        mv.appointment_id = None
+        mv.note = f"{mv.note or ''} (from deleted appointment #{appt.id})".strip()
 
     db.delete(appt)
     db.commit()
-    return {"deleted": True}
+    return {"deleted": True, "movements_detached": len(movements)}

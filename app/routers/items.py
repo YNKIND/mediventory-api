@@ -9,7 +9,17 @@ from app.dependencies import get_current_user
 
 
 router = APIRouter(prefix="/items", tags=["items"])
-
+def resolve_qty(item: models.Item, payload: schemas.StockChange) -> tuple[Decimal, str]:
+    """Convert a requested change into base units. Returns (qty, description)."""
+    if not payload.as_packs:
+        return payload.change_qty, f"{payload.change_qty} {item.unit}"
+    if not item.pack_unit or not item.pack_size or item.pack_size <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{item.name} has no pack size configured, enter the quantity in {item.unit} instead",
+        )
+    qty = payload.change_qty * item.pack_size
+    return qty, f"{payload.change_qty} {item.pack_unit} ({item.pack_size} {item.unit} each)"
 
 def get_db():
     db = SessionLocal()
@@ -29,6 +39,8 @@ def create_item(
         name=payload.name,
         category=payload.category,
         unit=payload.unit,
+        pack_unit=payload.pack_unit,
+        pack_size=payload.pack_size,
         par_level=payload.par_level,
         reorder_qty=payload.reorder_qty,
     )
@@ -60,8 +72,13 @@ def receive_stock(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
     if payload.change_qty <= 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Receive quantity must be positive")
-    apply_movement(db, item, payload.change_qty, reason="received", note=payload.note)
+    qty, description = resolve_qty(item, payload)
+    note = f"Received {description}"
+    if payload.note:
+        note = f"{note}. {payload.note}"
+    apply_movement(db, item, qty, reason="received", note=note)
     return item
+
 
 @router.post("/{item_id}/adjust", response_model=schemas.ItemOut)
 def adjust_stock(
@@ -75,13 +92,17 @@ def adjust_stock(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
     if payload.change_qty == 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Adjustment cannot be zero")
-    new_qty = item.stock_qty + payload.change_qty
+    qty, description = resolve_qty(item, payload)
+    new_qty = item.stock_qty + qty
     if new_qty < 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Adjustment would put stock below zero (current: {item.stock_qty}, change: {payload.change_qty})",
+            detail=f"Adjustment would put stock below zero (current: {item.stock_qty} {item.unit}, change: {qty})",
         )
-    apply_movement(db, item, payload.change_qty, reason="correction", note=payload.note)
+    note = f"Adjusted {description}"
+    if payload.note:
+        note = f"{note}. {payload.note}"
+    apply_movement(db, item, qty, reason="correction", note=note)
     return item
 
 @router.get("/{item_id}/movements", response_model=list[schemas.MovementOut])

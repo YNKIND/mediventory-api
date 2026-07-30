@@ -7,6 +7,8 @@ class ItemCreate(BaseModel):
     name: str
     category: Optional[str] = None
     unit: str = "unit"
+    pack_unit: Optional[str] = None
+    pack_size: Decimal = Decimal("1")
     par_level: Decimal = Decimal("0")
     reorder_qty: Decimal = Decimal("0")
 
@@ -16,6 +18,8 @@ class ItemOut(BaseModel):
     name: str
     category: Optional[str]
     unit: str
+    pack_unit: Optional[str]
+    pack_size: Decimal
     stock_qty: Decimal
     par_level: Decimal
     reorder_qty: Decimal
@@ -28,6 +32,17 @@ class ItemOut(BaseModel):
 class StockChange(BaseModel):
     change_qty: Decimal
     note: Optional[str] = None
+    as_packs: bool = False
+
+
+class NewItemInline(BaseModel):
+    name: str
+    category: Optional[str] = None
+    unit: str = "unit"
+    pack_unit: Optional[str] = None
+    pack_size: Decimal = Decimal("1")
+    par_level: Decimal = Decimal("0")
+    reorder_qty: Decimal = Decimal("0")
 
 class UserCreate(BaseModel):
     email: EmailStr
@@ -110,9 +125,12 @@ class ReorderLineOut(BaseModel):
     item_id: int
     item_name: str
     unit: str
+    pack_unit: Optional[str]
+    pack_size: Decimal
     stock_qty: Decimal
     par_level: Decimal
     suggested_qty: Decimal
+    suggested_packs: Optional[Decimal]
 
 
 class DashboardSummary(BaseModel):
@@ -133,13 +151,6 @@ class MovementOut(BaseModel):
 
 class Config:
     from_attributes = True
-
-class NewItemInline(BaseModel):
-    name: str
-    category: Optional[str] = None
-    unit: str = "unit"
-    par_level: Decimal = Decimal("0")
-    reorder_qty: Decimal = Decimal("0")
 
 
 class SupplyInput(BaseModel):

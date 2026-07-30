@@ -17,6 +17,8 @@ class Item(Base):
     name = Column(String, nullable=False)
     category = Column(String, nullable=True)
     unit = Column(String, nullable=False, default="unit")
+    pack_unit = Column(String, nullable=True)
+    pack_size = Column(Numeric(12, 2), nullable=False, server_default="1", default=1)
     stock_qty = Column(Numeric(12, 2), nullable=False, default=0)
     par_level = Column(Numeric(12, 2), nullable=False, default=0)
     reorder_qty = Column(Numeric(12, 2), nullable=False, default=0)

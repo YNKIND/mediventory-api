@@ -3,7 +3,7 @@ from decimal import Decimal
 from app.levels import stock_level
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-
+from decimal import Decimal, ROUND_CEILING
 from app.database import SessionLocal
 from app import models, schemas
 from app.dependencies import get_current_user
@@ -59,13 +59,21 @@ def get_reorder_list(
             suggested = item.reorder_qty
         else:
             suggested = item.par_level - item.stock_qty
+
+        suggested_packs = None
+        if item.pack_unit and item.pack_size and item.pack_size > 0:
+            suggested_packs = (suggested / item.pack_size).to_integral_value(rounding=ROUND_CEILING)
+
         lines.append({
             "item_id": item.id,
             "item_name": item.name,
             "unit": item.unit,
+            "pack_unit": item.pack_unit,
+            "pack_size": item.pack_size,
             "stock_qty": item.stock_qty,
             "par_level": item.par_level,
             "suggested_qty": suggested,
+            "suggested_packs": suggested_packs,
         })
     lines.sort(key=lambda line: line["item_name"])
     return lines
