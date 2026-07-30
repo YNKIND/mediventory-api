@@ -1,48 +1,9 @@
-from pydantic import BaseModel, EmailStr
+from datetime import datetime
 from decimal import Decimal
 from typing import Optional
-from datetime import datetime
 
-class ItemCreate(BaseModel):
-    name: str
-    category: Optional[str] = None
-    unit: str = "unit"
-    pack_unit: Optional[str] = None
-    pack_size: Decimal = Decimal("1")
-    par_level: Decimal = Decimal("0")
-    reorder_qty: Decimal = Decimal("0")
+from pydantic import BaseModel, EmailStr
 
-
-class ItemOut(BaseModel):
-    id: int
-    name: str
-    category: Optional[str]
-    unit: str
-    pack_unit: Optional[str]
-    pack_size: Decimal
-    stock_qty: Decimal
-    par_level: Decimal
-    reorder_qty: Decimal
-    active: bool
-
-    class Config:
-        from_attributes = True
-
-
-class StockChange(BaseModel):
-    change_qty: Decimal
-    note: Optional[str] = None
-    as_packs: bool = False
-
-
-class NewItemInline(BaseModel):
-    name: str
-    category: Optional[str] = None
-    unit: str = "unit"
-    pack_unit: Optional[str] = None
-    pack_size: Decimal = Decimal("1")
-    par_level: Decimal = Decimal("0")
-    reorder_qty: Decimal = Decimal("0")
 
 class UserCreate(BaseModel):
     email: EmailStr
@@ -68,8 +29,68 @@ class LoginRequest(BaseModel):
     email: EmailStr
     password: str
 
+
+class ItemCreate(BaseModel):
+    name: str
+    category: Optional[str] = None
+    unit: Optional[str] = "unit"
+    pack_unit: Optional[str] = None
+    pack_size: Optional[Decimal] = Decimal("1")
+    par_level: Optional[Decimal] = Decimal("0")
+    reorder_qty: Optional[Decimal] = Decimal("0")
+
+
+class ItemUpdate(BaseModel):
+    name: Optional[str] = None
+    category: Optional[str] = None
+    unit: Optional[str] = None
+    pack_unit: Optional[str] = None
+    pack_size: Optional[Decimal] = None
+    par_level: Optional[Decimal] = None
+    reorder_qty: Optional[Decimal] = None
+
+
+class ItemOut(BaseModel):
+    id: int
+    name: str
+    category: Optional[str]
+    unit: str
+    pack_unit: Optional[str]
+    pack_size: Decimal
+    stock_qty: Decimal
+    par_level: Decimal
+    reorder_qty: Decimal
+    active: bool
+
+    class Config:
+        from_attributes = True
+
+
+class StockChange(BaseModel):
+    change_qty: Decimal
+    note: Optional[str] = None
+    as_packs: bool = False
+
+
+class MovementOut(BaseModel):
+    id: int
+    change_qty: Decimal
+    reason: str
+    note: Optional[str]
+    appointment_id: Optional[int]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class ProcedureCreate(BaseModel):
     name: str
+    code: Optional[str] = None
+
+
+class ProcedureUpdate(BaseModel):
+    name: Optional[str] = None
     code: Optional[str] = None
 
 
@@ -91,13 +112,62 @@ class SupplyLine(BaseModel):
 class SupplyLineOut(BaseModel):
     item_id: int
     item_name: str
+    unit: str
     qty_per_procedure: Decimal
+
+
+class NewItemInline(BaseModel):
+    name: str
+    category: Optional[str] = None
+    unit: Optional[str] = "unit"
+    pack_unit: Optional[str] = None
+    pack_size: Optional[Decimal] = Decimal("1")
+    par_level: Optional[Decimal] = Decimal("0")
+    reorder_qty: Optional[Decimal] = Decimal("0")
+
+
+class SupplyInput(BaseModel):
+    item_id: Optional[int] = None
+    new_item: Optional[NewItemInline] = None
+    qty_per_procedure: Decimal
+
+
+class ProcedureWithSuppliesCreate(BaseModel):
+    name: str
+    code: Optional[str] = None
+    supplies: list[SupplyInput]
+
+
+class StockCheckLine(BaseModel):
+    item_id: int
+    item_name: str
+    unit: str
+    required: Decimal
+    on_hand: Decimal
+    after: Decimal
+    par_level: Decimal
+    sufficient: bool
+    level: Optional[str]
+
+
+class StockCheck(BaseModel):
+    procedure_id: int
+    procedure_name: str
+    has_supplies: bool
+    ready: bool
+    lines: list[StockCheckLine]
 
 
 class AppointmentCreate(BaseModel):
     procedure_id: int
     patient_label: Optional[str] = None
     scheduled_at: datetime
+
+
+class AppointmentUpdate(BaseModel):
+    procedure_id: Optional[int] = None
+    patient_label: Optional[str] = None
+    scheduled_at: Optional[datetime] = None
 
 
 class AppointmentOut(BaseModel):
@@ -139,47 +209,3 @@ class DashboardSummary(BaseModel):
     critical_count: int
     appointments_today: int
     completed_today: int
-
-
-class MovementOut(BaseModel):
-    id: int
-    change_qty: Decimal
-    reason: str
-    note: Optional[str]
-    appointment_id: Optional[int]
-    created_at: datetime
-
-class Config:
-    from_attributes = True
-
-
-class SupplyInput(BaseModel):
-    item_id: Optional[int] = None
-    new_item: Optional[NewItemInline] = None
-    qty_per_procedure: Decimal
-
-
-class ProcedureWithSuppliesCreate(BaseModel):
-    name: str
-    code: Optional[str] = None
-    supplies: list[SupplyInput]
-
-
-class StockCheckLine(BaseModel):
-    item_id: int
-    item_name: str
-    unit: str
-    required: Decimal
-    on_hand: Decimal
-    after: Decimal
-    par_level: Decimal
-    sufficient: bool
-    level: Optional[str]
-
-
-class StockCheck(BaseModel):
-    procedure_id: int
-    procedure_name: str
-    has_supplies: bool
-    ready: bool
-    lines: list[StockCheckLine]

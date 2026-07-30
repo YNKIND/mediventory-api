@@ -1,5 +1,7 @@
 from decimal import Decimal
+
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
@@ -9,6 +11,16 @@ from app.dependencies import get_current_user
 
 
 router = APIRouter(prefix="/items", tags=["items"])
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
 def resolve_qty(item: models.Item, payload: schemas.StockChange) -> tuple[Decimal, str]:
     """Convert a requested change into base units. Returns (qty, description)."""
     if not payload.as_packs:
@@ -21,12 +33,19 @@ def resolve_qty(item: models.Item, payload: schemas.StockChange) -> tuple[Decima
     qty = payload.change_qty * item.pack_size
     return qty, f"{payload.change_qty} {item.pack_unit} ({item.pack_size} {item.unit} each)"
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+
+def assert_name_free(db: Session, name: str, exclude_id: int | None = None):
+    query = db.query(models.Item).filter(
+        func.lower(models.Item.name) == name.strip().lower(),
+        models.Item.active == True,
+    )
+    if exclude_id is not None:
+        query = query.filter(models.Item.id != exclude_id)
+    if query.first():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"An active item named {name.strip()} already exists",
+        )
 
 
 @router.post("", response_model=schemas.ItemOut)
@@ -35,14 +54,19 @@ def create_item(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    if not payload.name or not payload.name.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Item name is required")
+    assert_name_free(db, payload.name)
+
+    pack_size = payload.pack_size if payload.pack_size and payload.pack_size > 0 else Decimal("1")
     item = models.Item(
-        name=payload.name,
-        category=payload.category,
-        unit=payload.unit,
-        pack_unit=payload.pack_unit,
-        pack_size=payload.pack_size,
-        par_level=payload.par_level,
-        reorder_qty=payload.reorder_qty,
+        name=payload.name.strip(),
+        category=(payload.category or "").strip() or None,
+        unit=(payload.unit or "unit").strip() or "unit",
+        pack_unit=(payload.pack_unit or "").strip() or None,
+        pack_size=pack_size,
+        par_level=payload.par_level or Decimal("0"),
+        reorder_qty=payload.reorder_qty or Decimal("0"),
     )
     db.add(item)
     db.commit()
@@ -60,6 +84,60 @@ def list_items(
     if not include_inactive:
         query = query.filter(models.Item.active == True)
     return query.order_by(models.Item.name).all()
+
+
+@router.patch("/{item_id}", response_model=schemas.ItemOut)
+def update_item(
+    item_id: int,
+    payload: schemas.ItemUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    item = db.query(models.Item).filter(models.Item.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+
+    if payload.name is not None:
+        if not payload.name.strip():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Item name cannot be empty")
+        assert_name_free(db, payload.name, exclude_id=item.id)
+        item.name = payload.name.strip()
+
+    if payload.category is not None:
+        item.category = payload.category.strip() or None
+
+    if payload.unit is not None:
+        item.unit = payload.unit.strip() or "unit"
+
+    if payload.pack_unit is not None:
+        item.pack_unit = payload.pack_unit.strip() or None
+
+    if payload.pack_size is not None:
+        if payload.pack_size <= 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Pack size must be greater than zero")
+        item.pack_size = payload.pack_size
+
+    if payload.par_level is not None:
+        if payload.par_level < 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Minimum stock cannot be negative")
+        item.par_level = payload.par_level
+
+    if payload.reorder_qty is not None:
+        if payload.reorder_qty < 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reorder quantity cannot be negative")
+        item.reorder_qty = payload.reorder_qty
+
+    if item.pack_unit and (not item.pack_size or item.pack_size <= 0):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="An item with a pack unit needs a pack size greater than zero",
+        )
+
+    db.commit()
+    db.refresh(item)
+    return item
+
+
 @router.post("/{item_id}/receive", response_model=schemas.ItemOut)
 def receive_stock(
     item_id: int,
@@ -105,6 +183,7 @@ def adjust_stock(
     apply_movement(db, item, qty, reason="correction", note=note)
     return item
 
+
 @router.get("/{item_id}/movements", response_model=list[schemas.MovementOut])
 def item_movements(
     item_id: int,
@@ -117,6 +196,7 @@ def item_movements(
     return db.query(models.StockMovement).filter(
         models.StockMovement.item_id == item_id
     ).order_by(models.StockMovement.created_at.desc()).all()
+
 
 @router.delete("/{item_id}", response_model=schemas.ItemOut)
 def deactivate_item(
@@ -144,6 +224,7 @@ def restore_item(
     item = db.query(models.Item).filter(models.Item.id == item_id).first()
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    assert_name_free(db, item.name, exclude_id=item.id)
     item.active = True
     db.commit()
     db.refresh(item)
