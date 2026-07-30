@@ -131,5 +131,44 @@ class MovementOut(BaseModel):
     appointment_id: Optional[int]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+class Config:
+    from_attributes = True
+
+class NewItemInline(BaseModel):
+    name: str
+    category: Optional[str] = None
+    unit: str = "unit"
+    par_level: Decimal = Decimal("0")
+    reorder_qty: Decimal = Decimal("0")
+
+
+class SupplyInput(BaseModel):
+    item_id: Optional[int] = None
+    new_item: Optional[NewItemInline] = None
+    qty_per_procedure: Decimal
+
+
+class ProcedureWithSuppliesCreate(BaseModel):
+    name: str
+    code: Optional[str] = None
+    supplies: list[SupplyInput]
+
+
+class StockCheckLine(BaseModel):
+    item_id: int
+    item_name: str
+    unit: str
+    required: Decimal
+    on_hand: Decimal
+    after: Decimal
+    par_level: Decimal
+    sufficient: bool
+    level: Optional[str]
+
+
+class StockCheck(BaseModel):
+    procedure_id: int
+    procedure_name: str
+    has_supplies: bool
+    ready: bool
+    lines: list[StockCheckLine]

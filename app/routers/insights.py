@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-
+from app.levels import stock_level
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
@@ -20,15 +20,6 @@ def get_db():
         db.close()
 
 
-def stock_level(item: models.Item) -> str | None:
-    """Return 'critical', 'low', or None if the item is healthy."""
-    if item.par_level is None or item.par_level <= 0:
-        return None
-    if item.stock_qty <= item.par_level * Decimal("0.25"):
-        return "critical"
-    if item.stock_qty <= item.par_level:
-        return "low"
-    return None
 
 
 @router.get("/alerts", response_model=list[schemas.AlertOut])
@@ -39,7 +30,7 @@ def get_alerts(
     items = db.query(models.Item).filter(models.Item.active == True).all()
     alerts = []
     for item in items:
-        level = stock_level(item)
+        level = stock_level(item.stock_qty, item.par_level)
         if level is None:
             continue
         alerts.append({
@@ -90,7 +81,7 @@ def dashboard_summary(
     low_count = 0
     critical_count = 0
     for item in items:
-        level = stock_level(item)
+        level = stock_level(item.stock_qty, item.par_level)
         if level == "critical":
             critical_count += 1
         elif level == "low":
