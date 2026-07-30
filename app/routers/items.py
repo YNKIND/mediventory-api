@@ -61,7 +61,6 @@ def receive_stock(
     apply_movement(db, item, payload.change_qty, reason="received", note=payload.note)
     return item
 
-
 @router.post("/{item_id}/adjust", response_model=schemas.ItemOut)
 def adjust_stock(
     item_id: int,
@@ -72,6 +71,14 @@ def adjust_stock(
     item = db.query(models.Item).filter(models.Item.id == item_id).first()
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    if payload.change_qty == 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Adjustment cannot be zero")
+    new_qty = item.stock_qty + payload.change_qty
+    if new_qty < 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Adjustment would put stock below zero (current: {item.stock_qty}, change: {payload.change_qty})",
+        )
     apply_movement(db, item, payload.change_qty, reason="correction", note=payload.note)
     return item
 

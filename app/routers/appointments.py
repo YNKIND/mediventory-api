@@ -62,7 +62,19 @@ def complete_appointment(
     supplies = db.query(models.ProcedureSupply).filter(
         models.ProcedureSupply.procedure_id == appt.procedure_id
     ).all()
+    shortages = []
+    for line in supplies:
+        item = db.query(models.Item).filter(models.Item.id == line.item_id).first()
+        if not item:
+            continue
+        if item.stock_qty < line.qty_per_procedure:
+            shortages.append(f"{item.name} (need {line.qty_per_procedure}, have {item.stock_qty})")
 
+    if shortages:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Insufficient stock: " + "; ".join(shortages),
+        )
     for line in supplies:
         item = db.query(models.Item).filter(models.Item.id == line.item_id).first()
         if item:
