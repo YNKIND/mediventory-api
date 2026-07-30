@@ -32,7 +32,7 @@ class StockMovement(Base):
     reason = Column(String, nullable=False)
     note = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-
+    appointment_id = Column(Integer, ForeignKey("appointments.id"), nullable=True)
 class Procedure(Base):
     __tablename__ = "procedures"
 
@@ -49,3 +49,15 @@ class ProcedureSupply(Base):
     procedure_id = Column(Integer, ForeignKey("procedures.id"), nullable=False)
     item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
     qty_per_procedure = Column(Numeric(12, 2), nullable=False)
+
+
+class Appointment(Base):
+    __tablename__ = "appointments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    procedure_id = Column(Integer, ForeignKey("procedures.id"), nullable=False)
+    patient_label = Column(String, nullable=True)
+    scheduled_at = Column(DateTime(timezone=True), nullable=False)
+    status = Column(String, nullable=False, default="scheduled")
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

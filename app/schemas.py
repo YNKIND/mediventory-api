@@ -1,7 +1,7 @@
 from pydantic import BaseModel, EmailStr
 from decimal import Decimal
 from typing import Optional
-
+from datetime import datetime
 
 class ItemCreate(BaseModel):
     name: str
@@ -77,3 +77,21 @@ class SupplyLineOut(BaseModel):
     item_id: int
     item_name: str
     qty_per_procedure: Decimal
+
+
+class AppointmentCreate(BaseModel):
+    procedure_id: int
+    patient_label: Optional[str] = None
+    scheduled_at: datetime
+
+
+class AppointmentOut(BaseModel):
+    id: int
+    procedure_id: int
+    patient_label: Optional[str]
+    scheduled_at: datetime
+    status: str
+    completed_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
