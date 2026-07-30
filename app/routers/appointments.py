@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-
+from decimal import Decimal
 from app.database import SessionLocal
 from app import models, schemas
 from app.stock import apply_movement
@@ -106,23 +106,36 @@ def uncomplete_appointment(
     if appt.status != "completed":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Appointment is not completed")
 
-    movements = db.query(models.StockMovement).filter(
+    procedure_moves = db.query(models.StockMovement).filter(
         models.StockMovement.appointment_id == appt.id,
         models.StockMovement.reason == "procedure",
     ).all()
 
-    for mv in movements:
-        item = db.query(models.Item).filter(models.Item.id == mv.item_id).first()
+    reversal_moves = db.query(models.StockMovement).filter(
+        models.StockMovement.appointment_id == appt.id,
+        models.StockMovement.reason == "reversal",
+    ).all()
+
+    # net out what's already been reversed, per item
+    net_by_item = {}
+    for mv in procedure_moves:
+        net_by_item[mv.item_id] = net_by_item.get(mv.item_id, Decimal("0")) + mv.change_qty
+    for mv in reversal_moves:
+        net_by_item[mv.item_id] = net_by_item.get(mv.item_id, Decimal("0")) + mv.change_qty
+
+    for item_id, net in net_by_item.items():
+        if net == 0:
+            continue
+        item = db.query(models.Item).filter(models.Item.id == item_id).first()
         if item:
             apply_movement(
                 db,
                 item,
-                -mv.change_qty,
+                -net,
                 reason="reversal",
                 note=f"Reversal of appointment #{appt.id}",
                 appointment_id=appt.id,
             )
-
     appt.status = "scheduled"
     appt.completed_at = None
     db.commit()
