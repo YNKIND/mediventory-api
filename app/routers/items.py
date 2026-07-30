@@ -40,12 +40,14 @@ def create_item(
 
 @router.get("", response_model=list[schemas.ItemOut])
 def list_items(
+    include_inactive: bool = False,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    return db.query(models.Item).filter(models.Item.active == True).all()
-
-
+    query = db.query(models.Item)
+    if not include_inactive:
+        query = query.filter(models.Item.active == True)
+    return query.order_by(models.Item.name).all()
 @router.post("/{item_id}/receive", response_model=schemas.ItemOut)
 def receive_stock(
     item_id: int,
@@ -94,3 +96,34 @@ def item_movements(
     return db.query(models.StockMovement).filter(
         models.StockMovement.item_id == item_id
     ).order_by(models.StockMovement.created_at.desc()).all()
+
+@router.delete("/{item_id}", response_model=schemas.ItemOut)
+def deactivate_item(
+    item_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    item = db.query(models.Item).filter(models.Item.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    if not item.active:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Item is already retired")
+    item.active = False
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@router.post("/{item_id}/restore", response_model=schemas.ItemOut)
+def restore_item(
+    item_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    item = db.query(models.Item).filter(models.Item.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    item.active = True
+    db.commit()
+    db.refresh(item)
+    return item
