@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from decimal import Decimal
+from decimal import Decimal 
 from app.database import SessionLocal
 from app import models, schemas
 from app.stock import apply_movement
