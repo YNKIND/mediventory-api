@@ -9,6 +9,21 @@ class User(Base):
     email = Column(String, unique=True, nullable=False)
     full_name = Column(String, nullable=False)
     password_hash = Column(String, nullable=False)
+    role = Column(String, nullable=False, server_default="staff", default="staff")
+    active = Column(Boolean, nullable=False, server_default="true", default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    token_hash = Column(String, nullable=False, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    used_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
 
 class Item(Base):
     __tablename__ = "items"
@@ -22,6 +37,9 @@ class Item(Base):
     stock_qty = Column(Numeric(12, 2), nullable=False, default=0)
     par_level = Column(Numeric(12, 2), nullable=False, default=0)
     reorder_qty = Column(Numeric(12, 2), nullable=False, default=0)
+    supplier_name = Column(String, nullable=True)
+    supplier_sku = Column(String, nullable=True)
+    unit_cost = Column(Numeric(12, 2), nullable=True)
     active = Column(Boolean, nullable=False, default=True)
 
 
@@ -33,8 +51,11 @@ class StockMovement(Base):
     change_qty = Column(Numeric(12, 2), nullable=False)
     reason = Column(String, nullable=False)
     note = Column(String, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
     appointment_id = Column(Integer, ForeignKey("appointments.id"), nullable=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class Procedure(Base):
     __tablename__ = "procedures"
 
@@ -63,4 +84,3 @@ class Appointment(Base):
     status = Column(String, nullable=False, default="scheduled")
     completed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-

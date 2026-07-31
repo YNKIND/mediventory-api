@@ -33,4 +33,25 @@ def get_current_user(
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if user is None:
         raise credentials_exception
+    if not user.active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account has been deactivated",
+        )
     return user
+
+
+def require_roles(*allowed_roles: str):
+    """Build a dependency that only lets certain roles through."""
+    def guard(current_user: models.User = Depends(get_current_user)) -> models.User:
+        if current_user.role not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to do this",
+            )
+        return current_user
+    return guard
+
+
+require_admin = require_roles("owner", "admin")
+require_owner = require_roles("owner")

@@ -64,6 +64,10 @@ def get_reorder_list(
         if item.pack_unit and item.pack_size and item.pack_size > 0:
             suggested_packs = (suggested / item.pack_size).to_integral_value(rounding=ROUND_CEILING)
 
+        estimated_cost = None
+        if item.unit_cost is not None:
+            estimated_cost = (suggested * item.unit_cost).quantize(Decimal("0.01"))
+
         lines.append({
             "item_id": item.id,
             "item_name": item.name,
@@ -74,8 +78,13 @@ def get_reorder_list(
             "par_level": item.par_level,
             "suggested_qty": suggested,
             "suggested_packs": suggested_packs,
+            "supplier_name": item.supplier_name,
+            "supplier_sku": item.supplier_sku,
+            "unit_cost": item.unit_cost,
+            "estimated_cost": estimated_cost,
         })
-    lines.sort(key=lambda line: line["item_name"])
+
+    lines.sort(key=lambda line: ((line["supplier_name"] or "zzz").lower(), line["item_name"].lower()))
     return lines
 
 

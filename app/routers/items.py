@@ -4,21 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.database import SessionLocal
 from app import models, schemas
 from app.stock import apply_movement
-from app.dependencies import get_current_user
+from app.dependencies import get_db, get_current_user, require_admin
 
 
 router = APIRouter(prefix="/items", tags=["items"])
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 def resolve_qty(item: models.Item, payload: schemas.StockChange) -> tuple[Decimal, str]:
@@ -58,6 +49,13 @@ def create_item(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Item name is required")
     assert_name_free(db, payload.name)
 
+    if payload.unit_cost is not None and payload.unit_cost < 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unit cost cannot be negative")
+    if payload.par_level is not None and payload.par_level < 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Minimum stock cannot be negative")
+    if payload.reorder_qty is not None and payload.reorder_qty < 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reorder quantity cannot be negative")
+
     pack_size = payload.pack_size if payload.pack_size and payload.pack_size > 0 else Decimal("1")
     item = models.Item(
         name=payload.name.strip(),
@@ -67,6 +65,9 @@ def create_item(
         pack_size=pack_size,
         par_level=payload.par_level or Decimal("0"),
         reorder_qty=payload.reorder_qty or Decimal("0"),
+        supplier_name=(payload.supplier_name or "").strip() or None,
+        supplier_sku=(payload.supplier_sku or "").strip() or None,
+        unit_cost=payload.unit_cost,
     )
     db.add(item)
     db.commit()
@@ -127,6 +128,17 @@ def update_item(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reorder quantity cannot be negative")
         item.reorder_qty = payload.reorder_qty
 
+    if payload.supplier_name is not None:
+        item.supplier_name = payload.supplier_name.strip() or None
+
+    if payload.supplier_sku is not None:
+        item.supplier_sku = payload.supplier_sku.strip() or None
+
+    if payload.unit_cost is not None:
+        if payload.unit_cost < 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unit cost cannot be negative")
+        item.unit_cost = payload.unit_cost
+
     if item.pack_unit and (not item.pack_size or item.pack_size <= 0):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -148,13 +160,16 @@ def receive_stock(
     item = db.query(models.Item).filter(models.Item.id == item_id).first()
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    if not item.active:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This item is retired. Restore it first.")
     if payload.change_qty <= 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Receive quantity must be positive")
+
     qty, description = resolve_qty(item, payload)
     note = f"Received {description}"
     if payload.note:
         note = f"{note}. {payload.note}"
-    apply_movement(db, item, qty, reason="received", note=note)
+    apply_movement(db, item, qty, reason="received", note=note, user_id=current_user.id)
     return item
 
 
@@ -168,8 +183,11 @@ def adjust_stock(
     item = db.query(models.Item).filter(models.Item.id == item_id).first()
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    if not item.active:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This item is retired. Restore it first.")
     if payload.change_qty == 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Adjustment cannot be zero")
+
     qty, description = resolve_qty(item, payload)
     new_qty = item.stock_qty + qty
     if new_qty < 0:
@@ -180,7 +198,7 @@ def adjust_stock(
     note = f"Adjusted {description}"
     if payload.note:
         note = f"{note}. {payload.note}"
-    apply_movement(db, item, qty, reason="correction", note=note)
+    apply_movement(db, item, qty, reason="correction", note=note, user_id=current_user.id)
     return item
 
 
@@ -193,16 +211,29 @@ def item_movements(
     item = db.query(models.Item).filter(models.Item.id == item_id).first()
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
-    return db.query(models.StockMovement).filter(
+
+    movements = db.query(models.StockMovement).filter(
         models.StockMovement.item_id == item_id
     ).order_by(models.StockMovement.created_at.desc()).all()
+
+    names = {user.id: user.full_name for user in db.query(models.User).all()}
+
+    return [{
+        "id": mv.id,
+        "change_qty": mv.change_qty,
+        "reason": mv.reason,
+        "note": mv.note,
+        "appointment_id": mv.appointment_id,
+        "user_name": names.get(mv.user_id),
+        "created_at": mv.created_at,
+    } for mv in movements]
 
 
 @router.delete("/{item_id}", response_model=schemas.ItemOut)
 def deactivate_item(
     item_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_admin),
 ):
     item = db.query(models.Item).filter(models.Item.id == item_id).first()
     if not item:
@@ -219,7 +250,7 @@ def deactivate_item(
 def restore_item(
     item_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_admin),
 ):
     item = db.query(models.Item).filter(models.Item.id == item_id).first()
     if not item:

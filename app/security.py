@@ -1,4 +1,6 @@
+import hashlib
 import os
+import secrets
 from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
@@ -10,6 +12,7 @@ load_dotenv()
 JWT_SECRET = os.getenv("JWT_SECRET")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "60"))
+RESET_TOKEN_MINUTES = 60
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -37,3 +40,26 @@ def decode_access_token(token: str) -> int | None:
         return int(user_id)
     except JWTError:
         return None
+
+
+def hash_reset_token(raw_token: str) -> str:
+    return hashlib.sha256(raw_token.encode()).hexdigest()
+
+
+def generate_reset_token() -> tuple[str, str]:
+    """Returns (raw_token_for_email, hash_for_storage)."""
+    raw = secrets.token_urlsafe(32)
+    return raw, hash_reset_token(raw)
+
+
+def reset_token_expiry() -> datetime:
+    return datetime.now(timezone.utc) + timedelta(minutes=RESET_TOKEN_MINUTES)
+
+
+def validate_password(password: str) -> str | None:
+    """Returns an error message, or None if the password is acceptable."""
+    if not password or len(password) < 8:
+        return "Password must be at least 8 characters"
+    if len(password) > 200:
+        return "Password is too long"
+    return None

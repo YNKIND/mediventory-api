@@ -11,15 +11,6 @@ class UserCreate(BaseModel):
     password: str
 
 
-class UserOut(BaseModel):
-    id: int
-    email: EmailStr
-    full_name: str
-
-    class Config:
-        from_attributes = True
-
-
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
@@ -38,6 +29,9 @@ class ItemCreate(BaseModel):
     pack_size: Optional[Decimal] = Decimal("1")
     par_level: Optional[Decimal] = Decimal("0")
     reorder_qty: Optional[Decimal] = Decimal("0")
+    supplier_name: Optional[str] = None
+    supplier_sku: Optional[str] = None
+    unit_cost: Optional[Decimal] = None
 
 
 class ItemUpdate(BaseModel):
@@ -48,6 +42,9 @@ class ItemUpdate(BaseModel):
     pack_size: Optional[Decimal] = None
     par_level: Optional[Decimal] = None
     reorder_qty: Optional[Decimal] = None
+    supplier_name: Optional[str] = None
+    supplier_sku: Optional[str] = None
+    unit_cost: Optional[Decimal] = None
 
 
 class ItemOut(BaseModel):
@@ -60,10 +57,27 @@ class ItemOut(BaseModel):
     stock_qty: Decimal
     par_level: Decimal
     reorder_qty: Decimal
+    supplier_name: Optional[str]
+    supplier_sku: Optional[str]
+    unit_cost: Optional[Decimal]
     active: bool
 
     class Config:
         from_attributes = True
+
+
+class NewItemInline(BaseModel):
+    name: str
+    category: Optional[str] = None
+    unit: Optional[str] = "unit"
+    pack_unit: Optional[str] = None
+    pack_size: Optional[Decimal] = Decimal("1")
+    par_level: Optional[Decimal] = Decimal("0")
+    reorder_qty: Optional[Decimal] = Decimal("0")
+    supplier_name: Optional[str] = None
+    supplier_sku: Optional[str] = None
+    unit_cost: Optional[Decimal] = None
+
 
 
 class StockChange(BaseModel):
@@ -72,16 +86,6 @@ class StockChange(BaseModel):
     as_packs: bool = False
 
 
-class MovementOut(BaseModel):
-    id: int
-    change_qty: Decimal
-    reason: str
-    note: Optional[str]
-    appointment_id: Optional[int]
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 class ProcedureCreate(BaseModel):
@@ -201,6 +205,23 @@ class ReorderLineOut(BaseModel):
     par_level: Decimal
     suggested_qty: Decimal
     suggested_packs: Optional[Decimal]
+    supplier_name: Optional[str]
+    supplier_sku: Optional[str]
+    unit_cost: Optional[Decimal]
+    estimated_cost: Optional[Decimal]
+
+
+class MovementOut(BaseModel):
+    id: int
+    change_qty: Decimal
+    reason: str
+    note: Optional[str]
+    appointment_id: Optional[int]
+    user_name: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
 
 
 class DashboardSummary(BaseModel):
@@ -209,3 +230,45 @@ class DashboardSummary(BaseModel):
     critical_count: int
     appointments_today: int
     completed_today: int
+
+class UserOut(BaseModel):
+    id: int
+    email: EmailStr
+    full_name: str
+    role: str
+    active: bool
+
+    class Config:
+        from_attributes = True
+
+
+class UserAdminCreate(BaseModel):
+    email: EmailStr
+    full_name: str
+    role: str = "staff"
+    password: Optional[str] = None
+    send_invite: bool = True
+
+
+class UserAdminUpdate(BaseModel):
+    full_name: Optional[str] = None
+    role: Optional[str] = None
+    active: Optional[bool] = None
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+class SimpleMessage(BaseModel):
+    message: str

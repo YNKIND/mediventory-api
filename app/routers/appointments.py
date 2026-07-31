@@ -4,21 +4,12 @@ from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.database import SessionLocal
 from app import models, schemas
 from app.stock import apply_movement
-from app.dependencies import get_current_user
+from app.dependencies import get_db, get_current_user
 
 
 router = APIRouter(prefix="/appointments", tags=["appointments"])
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 @router.post("", response_model=schemas.AppointmentOut)
@@ -30,6 +21,9 @@ def create_appointment(
     procedure = db.query(models.Procedure).filter(models.Procedure.id == payload.procedure_id).first()
     if not procedure:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Procedure not found")
+    if not procedure.active:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This procedure is retired")
+
     appt = models.Appointment(
         procedure_id=payload.procedure_id,
         patient_label=(payload.patient_label or "").strip() or None,
@@ -124,6 +118,7 @@ def complete_appointment(
                 reason="procedure",
                 note=f"Appointment #{appt.id}",
                 appointment_id=appt.id,
+                user_id=current_user.id,
             )
 
     appt.status = "completed"
@@ -173,6 +168,7 @@ def uncomplete_appointment(
                 reason="reversal",
                 note=f"Reversal of appointment #{appt.id}",
                 appointment_id=appt.id,
+                user_id=current_user.id,
             )
 
     appt.status = "scheduled"
@@ -198,6 +194,7 @@ def cancel_appointment(
         )
     if appt.status == "cancelled":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Already cancelled")
+
     appt.status = "cancelled"
     db.commit()
     db.refresh(appt)
@@ -214,7 +211,11 @@ def reopen_appointment(
     if not appt:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found")
     if appt.status != "cancelled":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only cancelled appointments can be reopened")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only cancelled appointments can be reopened",
+        )
+
     appt.status = "scheduled"
     db.commit()
     db.refresh(appt)
