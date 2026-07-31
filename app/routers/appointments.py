@@ -76,9 +76,49 @@ def update_appointment(
     return appt
 
 
+@router.get("/{appointment_id}/completion-draft", response_model=schemas.CompletionDraft)
+def completion_draft(
+    appointment_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    appt = db.query(models.Appointment).filter(models.Appointment.id == appointment_id).first()
+    if not appt:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found")
+
+    procedure = db.query(models.Procedure).filter(models.Procedure.id == appt.procedure_id).first()
+    supplies = db.query(models.ProcedureSupply).filter(
+        models.ProcedureSupply.procedure_id == appt.procedure_id
+    ).all()
+
+    lines = []
+    for supply in supplies:
+        item = db.query(models.Item).filter(models.Item.id == supply.item_id).first()
+        if not item:
+            continue
+        lines.append({
+            "item_id": item.id,
+            "item_name": item.name,
+            "unit": item.unit,
+            "expected_qty": supply.qty_per_procedure,
+            "on_hand": item.stock_qty,
+            "in_bom": True,
+        })
+
+    lines.sort(key=lambda line: line["item_name"].lower())
+
+    return {
+        "appointment_id": appt.id,
+        "procedure_name": procedure.name if procedure else "Unknown",
+        "patient_label": appt.patient_label,
+        "lines": lines,
+    }
+
+
 @router.post("/{appointment_id}/complete", response_model=schemas.AppointmentOut)
 def complete_appointment(
     appointment_id: int,
+    payload: schemas.CompleteRequest | None = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
@@ -90,36 +130,69 @@ def complete_appointment(
     if appt.status == "cancelled":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This appointment was cancelled")
 
-    supplies = db.query(models.ProcedureSupply).filter(
+    # If no confirmed lines were sent, fall back to the BOM as-is.
+    if payload is None or not payload.lines:
+        supplies = db.query(models.ProcedureSupply).filter(
+            models.ProcedureSupply.procedure_id == appt.procedure_id
+        ).all()
+        confirmed = [
+            schemas.ConfirmedLine(
+                item_id=s.item_id,
+                actual_qty=s.qty_per_procedure,
+                expected_qty=s.qty_per_procedure,
+            )
+            for s in supplies
+        ]
+    else:
+        confirmed = payload.lines
+
+    # Build the expected map from the BOM so we can record variance even if the
+    # frontend didn't send expected values.
+    bom = db.query(models.ProcedureSupply).filter(
         models.ProcedureSupply.procedure_id == appt.procedure_id
     ).all()
+    expected_map = {s.item_id: s.qty_per_procedure for s in bom}
 
-    shortages = []
-    for line in supplies:
+    # Validate every line before touching stock.
+    seen = set()
+    resolved = []
+    for line in confirmed:
+        if line.item_id in seen:
+            raise HTTPException(status_code=400, detail="The same item appears twice in the completion")
+        seen.add(line.item_id)
+
+        if line.actual_qty < 0:
+            raise HTTPException(status_code=400, detail="Quantities cannot be negative")
+
         item = db.query(models.Item).filter(models.Item.id == line.item_id).first()
         if not item:
-            continue
-        if item.stock_qty < line.qty_per_procedure:
-            shortages.append(f"{item.name} (need {line.qty_per_procedure} {item.unit}, have {item.stock_qty})")
+            raise HTTPException(status_code=400, detail=f"Item {line.item_id} not found")
+        if not item.active:
+            raise HTTPException(status_code=400, detail=f"{item.name} is retired and cannot be used")
 
-    if shortages:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Insufficient stock: " + "; ".join(shortages),
-        )
-
-    for line in supplies:
-        item = db.query(models.Item).filter(models.Item.id == line.item_id).first()
-        if item:
-            apply_movement(
-                db,
-                item,
-                -line.qty_per_procedure,
-                reason="procedure",
-                note=f"Appointment #{appt.id}",
-                appointment_id=appt.id,
-                user_id=current_user.id,
+        if line.actual_qty > 0 and item.stock_qty < line.actual_qty:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Insufficient stock: {item.name} (need {line.actual_qty} {item.unit}, have {item.stock_qty})",
             )
+
+        expected = line.expected_qty if line.expected_qty is not None else expected_map.get(item.id)
+        resolved.append((item, line.actual_qty, expected))
+
+    # Deduct. Skip zero-quantity lines (user removed them from the draft).
+    for item, actual_qty, expected in resolved:
+        if actual_qty == 0:
+            continue
+        apply_movement(
+            db,
+            item,
+            -actual_qty,
+            reason="procedure",
+            note=f"Appointment #{appt.id}",
+            appointment_id=appt.id,
+            user_id=current_user.id,
+            expected_qty=expected,
+        )
 
     appt.status = "completed"
     appt.completed_at = datetime.now(timezone.utc)

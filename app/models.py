@@ -49,6 +49,7 @@ class StockMovement(Base):
     id = Column(Integer, primary_key=True, index=True)
     item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
     change_qty = Column(Numeric(12, 2), nullable=False)
+    expected_qty = Column(Numeric(12, 2), nullable=True)
     reason = Column(String, nullable=False)
     note = Column(String, nullable=True)
     appointment_id = Column(Integer, ForeignKey("appointments.id"), nullable=True)

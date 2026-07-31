@@ -272,3 +272,28 @@ class ResetPasswordRequest(BaseModel):
 
 class SimpleMessage(BaseModel):
     message: str
+
+class CompletionDraftLine(BaseModel):
+    item_id: int
+    item_name: str
+    unit: str
+    expected_qty: Decimal
+    on_hand: Decimal
+    in_bom: bool
+
+
+class CompletionDraft(BaseModel):
+    appointment_id: int
+    procedure_name: str
+    patient_label: Optional[str]
+    lines: list[CompletionDraftLine]
+
+
+class ConfirmedLine(BaseModel):
+    item_id: int
+    actual_qty: Decimal
+    expected_qty: Optional[Decimal] = None
+
+
+class CompleteRequest(BaseModel):
+    lines: list[ConfirmedLine]

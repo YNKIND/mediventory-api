@@ -13,10 +13,12 @@ def apply_movement(
     note: str | None = None,
     appointment_id: int | None = None,
     user_id: int | None = None,
+    expected_qty: Decimal | None = None,
 ) -> models.StockMovement:
     movement = models.StockMovement(
         item_id=item.id,
         change_qty=change_qty,
+        expected_qty=expected_qty,
         reason=reason,
         note=note,
         appointment_id=appointment_id,
