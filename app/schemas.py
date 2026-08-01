@@ -214,6 +214,7 @@ class ReorderLineOut(BaseModel):
 class MovementOut(BaseModel):
     id: int
     change_qty: Decimal
+    expected_qty: Optional[Decimal] = None
     reason: str
     note: Optional[str]
     appointment_id: Optional[int]
@@ -222,7 +223,6 @@ class MovementOut(BaseModel):
 
     class Config:
         from_attributes = True
-
 
 class DashboardSummary(BaseModel):
     total_items: int
@@ -297,3 +297,19 @@ class ConfirmedLine(BaseModel):
 
 class CompleteRequest(BaseModel):
     lines: list[ConfirmedLine]
+
+class RegisterRequest(BaseModel):
+    clinic_name: str
+    email: EmailStr
+    full_name: str
+    password: str
+
+
+class MeOut(BaseModel):
+    id: int
+    email: EmailStr
+    full_name: str
+    role: str
+    active: bool
+    clinic_id: int
+    clinic_name: str

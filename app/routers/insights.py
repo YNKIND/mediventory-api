@@ -1,33 +1,27 @@
-from datetime import datetime, timedelta, timezone
-from decimal import Decimal
-from app.levels import stock_level
+from decimal import Decimal, ROUND_CEILING
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from decimal import Decimal, ROUND_CEILING
+
 from app.database import SessionLocal
 from app import models, schemas
-from app.dependencies import get_current_user
+from app.dependencies import get_db, get_current_user, get_clinic_id
+from app.levels import stock_level
 
 
 router = APIRouter(tags=["insights"])
 
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
-
-
 @router.get("/alerts", response_model=list[schemas.AlertOut])
 def get_alerts(
     db: Session = Depends(get_db),
+    clinic_id: int = Depends(get_clinic_id),
     current_user: models.User = Depends(get_current_user),
 ):
-    items = db.query(models.Item).filter(models.Item.active == True).all()
+    items = db.query(models.Item).filter(
+        models.Item.clinic_id == clinic_id,
+        models.Item.active == True,
+    ).all()
     alerts = []
     for item in items:
         level = stock_level(item.stock_qty, item.par_level)
@@ -48,9 +42,13 @@ def get_alerts(
 @router.get("/reorder-list", response_model=list[schemas.ReorderLineOut])
 def get_reorder_list(
     db: Session = Depends(get_db),
+    clinic_id: int = Depends(get_clinic_id),
     current_user: models.User = Depends(get_current_user),
 ):
-    items = db.query(models.Item).filter(models.Item.active == True).all()
+    items = db.query(models.Item).filter(
+        models.Item.clinic_id == clinic_id,
+        models.Item.active == True,
+    ).all()
     lines = []
     for item in items:
         if stock_level(item.stock_qty, item.par_level) is None:
@@ -91,9 +89,15 @@ def get_reorder_list(
 @router.get("/dashboard/summary", response_model=schemas.DashboardSummary)
 def dashboard_summary(
     db: Session = Depends(get_db),
+    clinic_id: int = Depends(get_clinic_id),
     current_user: models.User = Depends(get_current_user),
 ):
-    items = db.query(models.Item).filter(models.Item.active == True).all()
+    from datetime import datetime, timedelta, timezone
+
+    items = db.query(models.Item).filter(
+        models.Item.clinic_id == clinic_id,
+        models.Item.active == True,
+    ).all()
 
     low_count = 0
     critical_count = 0
@@ -109,6 +113,7 @@ def dashboard_summary(
     day_end = day_start + timedelta(days=1)
 
     todays = db.query(models.Appointment).filter(
+        models.Appointment.clinic_id == clinic_id,
         models.Appointment.scheduled_at >= day_start,
         models.Appointment.scheduled_at < day_end,
     ).all()

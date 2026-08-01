@@ -16,6 +16,7 @@ def apply_movement(
     expected_qty: Decimal | None = None,
 ) -> models.StockMovement:
     movement = models.StockMovement(
+        clinic_id=item.clinic_id,
         item_id=item.id,
         change_qty=change_qty,
         expected_qty=expected_qty,

@@ -6,14 +6,13 @@ from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.stock import apply_movement
-from app.dependencies import get_db, get_current_user, require_admin
+from app.dependencies import get_db, get_current_user, require_admin, get_clinic_id
 
 
 router = APIRouter(prefix="/items", tags=["items"])
 
 
 def resolve_qty(item: models.Item, payload: schemas.StockChange) -> tuple[Decimal, str]:
-    """Convert a requested change into base units. Returns (qty, description)."""
     if not payload.as_packs:
         return payload.change_qty, f"{payload.change_qty} {item.unit}"
     if not item.pack_unit or not item.pack_size or item.pack_size <= 0:
@@ -25,9 +24,21 @@ def resolve_qty(item: models.Item, payload: schemas.StockChange) -> tuple[Decima
     return qty, f"{payload.change_qty} {item.pack_unit} ({item.pack_size} {item.unit} each)"
 
 
-def assert_name_free(db: Session, name: str, exclude_id: int | None = None):
+def get_clinic_item(db: Session, item_id: int, clinic_id: int) -> models.Item:
+    """Fetch an item, but only if it belongs to this clinic. 404 otherwise."""
+    item = db.query(models.Item).filter(
+        models.Item.id == item_id,
+        models.Item.clinic_id == clinic_id,
+    ).first()
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    return item
+
+
+def assert_name_free(db: Session, name: str, clinic_id: int, exclude_id: int | None = None):
     query = db.query(models.Item).filter(
         func.lower(models.Item.name) == name.strip().lower(),
+        models.Item.clinic_id == clinic_id,
         models.Item.active == True,
     )
     if exclude_id is not None:
@@ -43,11 +54,12 @@ def assert_name_free(db: Session, name: str, exclude_id: int | None = None):
 def create_item(
     payload: schemas.ItemCreate,
     db: Session = Depends(get_db),
+    clinic_id: int = Depends(get_clinic_id),
     current_user: models.User = Depends(get_current_user),
 ):
     if not payload.name or not payload.name.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Item name is required")
-    assert_name_free(db, payload.name)
+    assert_name_free(db, payload.name, clinic_id)
 
     if payload.unit_cost is not None and payload.unit_cost < 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unit cost cannot be negative")
@@ -58,6 +70,7 @@ def create_item(
 
     pack_size = payload.pack_size if payload.pack_size and payload.pack_size > 0 else Decimal("1")
     item = models.Item(
+        clinic_id=clinic_id,
         name=payload.name.strip(),
         category=(payload.category or "").strip() or None,
         unit=(payload.unit or "unit").strip() or "unit",
@@ -79,9 +92,10 @@ def create_item(
 def list_items(
     include_inactive: bool = False,
     db: Session = Depends(get_db),
+    clinic_id: int = Depends(get_clinic_id),
     current_user: models.User = Depends(get_current_user),
 ):
-    query = db.query(models.Item)
+    query = db.query(models.Item).filter(models.Item.clinic_id == clinic_id)
     if not include_inactive:
         query = query.filter(models.Item.active == True)
     return query.order_by(models.Item.name).all()
@@ -92,48 +106,39 @@ def update_item(
     item_id: int,
     payload: schemas.ItemUpdate,
     db: Session = Depends(get_db),
+    clinic_id: int = Depends(get_clinic_id),
     current_user: models.User = Depends(get_current_user),
 ):
-    item = db.query(models.Item).filter(models.Item.id == item_id).first()
-    if not item:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    item = get_clinic_item(db, item_id, clinic_id)
 
     if payload.name is not None:
         if not payload.name.strip():
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Item name cannot be empty")
-        assert_name_free(db, payload.name, exclude_id=item.id)
+        assert_name_free(db, payload.name, clinic_id, exclude_id=item.id)
         item.name = payload.name.strip()
 
     if payload.category is not None:
         item.category = payload.category.strip() or None
-
     if payload.unit is not None:
         item.unit = payload.unit.strip() or "unit"
-
     if payload.pack_unit is not None:
         item.pack_unit = payload.pack_unit.strip() or None
-
     if payload.pack_size is not None:
         if payload.pack_size <= 0:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Pack size must be greater than zero")
         item.pack_size = payload.pack_size
-
     if payload.par_level is not None:
         if payload.par_level < 0:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Minimum stock cannot be negative")
         item.par_level = payload.par_level
-
     if payload.reorder_qty is not None:
         if payload.reorder_qty < 0:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reorder quantity cannot be negative")
         item.reorder_qty = payload.reorder_qty
-
     if payload.supplier_name is not None:
         item.supplier_name = payload.supplier_name.strip() or None
-
     if payload.supplier_sku is not None:
         item.supplier_sku = payload.supplier_sku.strip() or None
-
     if payload.unit_cost is not None:
         if payload.unit_cost < 0:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unit cost cannot be negative")
@@ -155,11 +160,10 @@ def receive_stock(
     item_id: int,
     payload: schemas.StockChange,
     db: Session = Depends(get_db),
+    clinic_id: int = Depends(get_clinic_id),
     current_user: models.User = Depends(get_current_user),
 ):
-    item = db.query(models.Item).filter(models.Item.id == item_id).first()
-    if not item:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    item = get_clinic_item(db, item_id, clinic_id)
     if not item.active:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This item is retired. Restore it first.")
     if payload.change_qty <= 0:
@@ -178,11 +182,10 @@ def adjust_stock(
     item_id: int,
     payload: schemas.StockChange,
     db: Session = Depends(get_db),
+    clinic_id: int = Depends(get_clinic_id),
     current_user: models.User = Depends(get_current_user),
 ):
-    item = db.query(models.Item).filter(models.Item.id == item_id).first()
-    if not item:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    item = get_clinic_item(db, item_id, clinic_id)
     if not item.active:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This item is retired. Restore it first.")
     if payload.change_qty == 0:
@@ -206,21 +209,22 @@ def adjust_stock(
 def item_movements(
     item_id: int,
     db: Session = Depends(get_db),
+    clinic_id: int = Depends(get_clinic_id),
     current_user: models.User = Depends(get_current_user),
 ):
-    item = db.query(models.Item).filter(models.Item.id == item_id).first()
-    if not item:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    item = get_clinic_item(db, item_id, clinic_id)
 
     movements = db.query(models.StockMovement).filter(
-        models.StockMovement.item_id == item_id
+        models.StockMovement.item_id == item.id,
+        models.StockMovement.clinic_id == clinic_id,
     ).order_by(models.StockMovement.created_at.desc()).all()
 
-    names = {user.id: user.full_name for user in db.query(models.User).all()}
+    names = {u.id: u.full_name for u in db.query(models.User).filter(models.User.clinic_id == clinic_id).all()}
 
     return [{
         "id": mv.id,
         "change_qty": mv.change_qty,
+        "expected_qty": mv.expected_qty,
         "reason": mv.reason,
         "note": mv.note,
         "appointment_id": mv.appointment_id,
@@ -233,11 +237,10 @@ def item_movements(
 def deactivate_item(
     item_id: int,
     db: Session = Depends(get_db),
+    clinic_id: int = Depends(get_clinic_id),
     current_user: models.User = Depends(require_admin),
 ):
-    item = db.query(models.Item).filter(models.Item.id == item_id).first()
-    if not item:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
+    item = get_clinic_item(db, item_id, clinic_id)
     if not item.active:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Item is already retired")
     item.active = False
@@ -250,12 +253,11 @@ def deactivate_item(
 def restore_item(
     item_id: int,
     db: Session = Depends(get_db),
+    clinic_id: int = Depends(get_clinic_id),
     current_user: models.User = Depends(require_admin),
 ):
-    item = db.query(models.Item).filter(models.Item.id == item_id).first()
-    if not item:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
-    assert_name_free(db, item.name, exclude_id=item.id)
+    item = get_clinic_item(db, item_id, clinic_id)
+    assert_name_free(db, item.name, clinic_id, exclude_id=item.id)
     item.active = True
     db.commit()
     db.refresh(item)

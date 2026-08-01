@@ -41,8 +41,11 @@ def get_current_user(
     return user
 
 
+def get_clinic_id(current_user: models.User = Depends(get_current_user)) -> int:
+    return current_user.clinic_id
+
+
 def require_roles(*allowed_roles: str):
-    """Build a dependency that only lets certain roles through."""
     def guard(current_user: models.User = Depends(get_current_user)) -> models.User:
         if current_user.role not in allowed_roles:
             raise HTTPException(

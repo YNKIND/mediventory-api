@@ -4,26 +4,25 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.database import SessionLocal
 from app import models, schemas
-from app.dependencies import get_current_user
+from app.dependencies import get_db, get_current_user, get_clinic_id
 from app.levels import stock_level
 
 
 router = APIRouter(prefix="/procedures", tags=["procedures"])
 
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+def get_clinic_procedure(db: Session, procedure_id: int, clinic_id: int) -> models.Procedure:
+    proc = db.query(models.Procedure).filter(
+        models.Procedure.id == procedure_id,
+        models.Procedure.clinic_id == clinic_id,
+    ).first()
+    if not proc:
+        raise HTTPException(status_code=404, detail="Procedure not found")
+    return proc
 
 
-def resolve_supply_lines(db: Session, supplies: list[schemas.SupplyInput]) -> list[tuple[int, Decimal]]:
-    """Validate supply inputs, create any new items, and return (item_id, qty) pairs.
-    Caller is responsible for the final commit."""
+def resolve_supply_lines(db: Session, supplies: list[schemas.SupplyInput], clinic_id: int) -> list[tuple[int, Decimal]]:
     if not supplies:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -42,9 +41,12 @@ def resolve_supply_lines(db: Session, supplies: list[schemas.SupplyInput]) -> li
             raise HTTPException(status_code=400, detail=f"Supply {position}: quantity must be greater than zero")
 
         if line.item_id is not None:
-            item = db.query(models.Item).filter(models.Item.id == line.item_id).first()
+            item = db.query(models.Item).filter(
+                models.Item.id == line.item_id,
+                models.Item.clinic_id == clinic_id,
+            ).first()
             if not item:
-                raise HTTPException(status_code=400, detail=f"Supply {position}: item {line.item_id} not found")
+                raise HTTPException(status_code=400, detail=f"Supply {position}: item not found")
             if line.item_id in seen_item_ids:
                 raise HTTPException(status_code=400, detail=f"Supply {position}: {item.name} is listed twice")
             seen_item_ids.add(line.item_id)
@@ -58,6 +60,7 @@ def resolve_supply_lines(db: Session, supplies: list[schemas.SupplyInput]) -> li
             seen_new_names.add(key)
             clash = db.query(models.Item).filter(
                 func.lower(models.Item.name) == key,
+                models.Item.clinic_id == clinic_id,
                 models.Item.active == True,
             ).first()
             if clash:
@@ -74,6 +77,7 @@ def resolve_supply_lines(db: Session, supplies: list[schemas.SupplyInput]) -> li
             spec = line.new_item
             pack_size = spec.pack_size if spec.pack_size and spec.pack_size > 0 else Decimal("1")
             new_item = models.Item(
+                clinic_id=clinic_id,
                 name=spec.name.strip(),
                 category=(spec.category or "").strip() or None,
                 unit=(spec.unit or "unit").strip() or "unit",
@@ -93,11 +97,12 @@ def resolve_supply_lines(db: Session, supplies: list[schemas.SupplyInput]) -> li
 def create_procedure(
     payload: schemas.ProcedureCreate,
     db: Session = Depends(get_db),
+    clinic_id: int = Depends(get_clinic_id),
     current_user: models.User = Depends(get_current_user),
 ):
     if not payload.name or not payload.name.strip():
         raise HTTPException(status_code=400, detail="Procedure name is required")
-    procedure = models.Procedure(name=payload.name.strip(), code=(payload.code or "").strip() or None)
+    procedure = models.Procedure(clinic_id=clinic_id, name=payload.name.strip(), code=(payload.code or "").strip() or None)
     db.add(procedure)
     db.commit()
     db.refresh(procedure)
@@ -108,23 +113,20 @@ def create_procedure(
 def create_procedure_with_supplies(
     payload: schemas.ProcedureWithSuppliesCreate,
     db: Session = Depends(get_db),
+    clinic_id: int = Depends(get_clinic_id),
     current_user: models.User = Depends(get_current_user),
 ):
     if not payload.name or not payload.name.strip():
         raise HTTPException(status_code=400, detail="Procedure name is required")
 
-    resolved = resolve_supply_lines(db, payload.supplies)
+    resolved = resolve_supply_lines(db, payload.supplies, clinic_id)
 
-    procedure = models.Procedure(name=payload.name.strip(), code=(payload.code or "").strip() or None)
+    procedure = models.Procedure(clinic_id=clinic_id, name=payload.name.strip(), code=(payload.code or "").strip() or None)
     db.add(procedure)
     db.flush()
 
     for item_id, qty in resolved:
-        db.add(models.ProcedureSupply(
-            procedure_id=procedure.id,
-            item_id=item_id,
-            qty_per_procedure=qty,
-        ))
+        db.add(models.ProcedureSupply(procedure_id=procedure.id, item_id=item_id, qty_per_procedure=qty))
 
     db.commit()
     db.refresh(procedure)
@@ -135,9 +137,10 @@ def create_procedure_with_supplies(
 def list_procedures(
     include_inactive: bool = False,
     db: Session = Depends(get_db),
+    clinic_id: int = Depends(get_clinic_id),
     current_user: models.User = Depends(get_current_user),
 ):
-    query = db.query(models.Procedure)
+    query = db.query(models.Procedure).filter(models.Procedure.clinic_id == clinic_id)
     if not include_inactive:
         query = query.filter(models.Procedure.active == True)
     return query.order_by(models.Procedure.name).all()
@@ -148,17 +151,15 @@ def update_procedure(
     procedure_id: int,
     payload: schemas.ProcedureUpdate,
     db: Session = Depends(get_db),
+    clinic_id: int = Depends(get_clinic_id),
     current_user: models.User = Depends(get_current_user),
 ):
-    procedure = db.query(models.Procedure).filter(models.Procedure.id == procedure_id).first()
-    if not procedure:
-        raise HTTPException(status_code=404, detail="Procedure not found")
+    procedure = get_clinic_procedure(db, procedure_id, clinic_id)
 
     if payload.name is not None:
         if not payload.name.strip():
             raise HTTPException(status_code=400, detail="Procedure name cannot be empty")
         procedure.name = payload.name.strip()
-
     if payload.code is not None:
         procedure.code = payload.code.strip() or None
 
@@ -171,13 +172,12 @@ def update_procedure(
 def get_supplies(
     procedure_id: int,
     db: Session = Depends(get_db),
+    clinic_id: int = Depends(get_clinic_id),
     current_user: models.User = Depends(get_current_user),
 ):
-    procedure = db.query(models.Procedure).filter(models.Procedure.id == procedure_id).first()
-    if not procedure:
-        raise HTTPException(status_code=404, detail="Procedure not found")
+    procedure = get_clinic_procedure(db, procedure_id, clinic_id)
     lines = db.query(models.ProcedureSupply).filter(
-        models.ProcedureSupply.procedure_id == procedure_id
+        models.ProcedureSupply.procedure_id == procedure.id
     ).all()
     result = []
     for line in lines:
@@ -188,7 +188,7 @@ def get_supplies(
             "unit": item.unit if item else "unit",
             "qty_per_procedure": line.qty_per_procedure,
         })
-    result.sort(key=lambda line: line["item_name"])
+    result.sort(key=lambda line: line["item_name"].lower())
     return result
 
 
@@ -197,41 +197,35 @@ def set_supplies(
     procedure_id: int,
     supplies: list[schemas.SupplyInput],
     db: Session = Depends(get_db),
+    clinic_id: int = Depends(get_clinic_id),
     current_user: models.User = Depends(get_current_user),
 ):
-    procedure = db.query(models.Procedure).filter(models.Procedure.id == procedure_id).first()
-    if not procedure:
-        raise HTTPException(status_code=404, detail="Procedure not found")
+    procedure = get_clinic_procedure(db, procedure_id, clinic_id)
 
-    resolved = resolve_supply_lines(db, supplies)
+    resolved = resolve_supply_lines(db, supplies, clinic_id)
 
     db.query(models.ProcedureSupply).filter(
-        models.ProcedureSupply.procedure_id == procedure_id
+        models.ProcedureSupply.procedure_id == procedure.id
     ).delete()
 
     for item_id, qty in resolved:
-        db.add(models.ProcedureSupply(
-            procedure_id=procedure_id,
-            item_id=item_id,
-            qty_per_procedure=qty,
-        ))
+        db.add(models.ProcedureSupply(procedure_id=procedure.id, item_id=item_id, qty_per_procedure=qty))
 
     db.commit()
-    return get_supplies(procedure_id, db, current_user)
+    return get_supplies(procedure_id, db, clinic_id, current_user)
 
 
 @router.get("/{procedure_id}/stock-check", response_model=schemas.StockCheck)
 def procedure_stock_check(
     procedure_id: int,
     db: Session = Depends(get_db),
+    clinic_id: int = Depends(get_clinic_id),
     current_user: models.User = Depends(get_current_user),
 ):
-    procedure = db.query(models.Procedure).filter(models.Procedure.id == procedure_id).first()
-    if not procedure:
-        raise HTTPException(status_code=404, detail="Procedure not found")
+    procedure = get_clinic_procedure(db, procedure_id, clinic_id)
 
     supplies = db.query(models.ProcedureSupply).filter(
-        models.ProcedureSupply.procedure_id == procedure_id
+        models.ProcedureSupply.procedure_id == procedure.id
     ).all()
 
     lines = []
@@ -273,16 +267,16 @@ def procedure_stock_check(
 def deactivate_procedure(
     procedure_id: int,
     db: Session = Depends(get_db),
+    clinic_id: int = Depends(get_clinic_id),
     current_user: models.User = Depends(get_current_user),
 ):
-    procedure = db.query(models.Procedure).filter(models.Procedure.id == procedure_id).first()
-    if not procedure:
-        raise HTTPException(status_code=404, detail="Procedure not found")
+    procedure = get_clinic_procedure(db, procedure_id, clinic_id)
     if not procedure.active:
         raise HTTPException(status_code=400, detail="Procedure is already retired")
 
     upcoming = db.query(models.Appointment).filter(
-        models.Appointment.procedure_id == procedure_id,
+        models.Appointment.procedure_id == procedure.id,
+        models.Appointment.clinic_id == clinic_id,
         models.Appointment.status == "scheduled",
     ).count()
     if upcoming > 0:
@@ -301,11 +295,10 @@ def deactivate_procedure(
 def restore_procedure(
     procedure_id: int,
     db: Session = Depends(get_db),
+    clinic_id: int = Depends(get_clinic_id),
     current_user: models.User = Depends(get_current_user),
 ):
-    procedure = db.query(models.Procedure).filter(models.Procedure.id == procedure_id).first()
-    if not procedure:
-        raise HTTPException(status_code=404, detail="Procedure not found")
+    procedure = get_clinic_procedure(db, procedure_id, clinic_id)
     procedure.active = True
     db.commit()
     db.refresh(procedure)
