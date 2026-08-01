@@ -313,3 +313,35 @@ class MeOut(BaseModel):
     active: bool
     clinic_id: int
     clinic_name: str
+
+class ImportProblem(BaseModel):
+    row: int
+    issue: str
+
+
+class ImportPreviewItem(BaseModel):
+    name: str
+    category: Optional[str]
+    unit: str
+    pack_unit: Optional[str]
+    pack_size: Decimal
+    par_level: Decimal
+    reorder_qty: Decimal
+    supplier_name: Optional[str]
+    supplier_sku: Optional[str]
+    unit_cost: Optional[Decimal]
+
+
+class ImportPreview(BaseModel):
+    total_rows: int
+    valid_count: int
+    problem_count: int
+    valid: list[ImportPreviewItem]
+    problems: list[ImportProblem]
+    detected_columns: list[str]
+
+
+class ImportResult(BaseModel):
+    created: int
+    skipped: int
+    problems: list[ImportProblem]
