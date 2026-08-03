@@ -5,7 +5,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
 from app import models, schemas
-from app.dependencies import get_db, get_current_user
+from app.dependencies import get_db, get_current_user, get_membership
 from app.email import send_password_reset
 from app.security import (
     hash_password, verify_password, create_access_token,
