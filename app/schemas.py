@@ -372,3 +372,13 @@ class ProcedureCostRow(BaseModel):
     times_completed: int
     total_cost: Decimal
     avg_cost: Decimal
+
+class ClinicMembershipOut(BaseModel):
+    clinic_id: int
+    clinic_name: str
+    role: str
+
+class AddToClinicRequest(BaseModel):
+    email: EmailStr
+    full_name: Optional[str] = None
+    role: str = "staff"

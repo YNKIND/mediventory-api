@@ -161,3 +161,51 @@ def send_reset_for_user(
     if not email_configured():
         return {"message": "Email is not configured yet, so the link was printed to the server log"}
     return {"message": "Could not send the email. Check the server log."}
+
+@router.post("/add-to-clinic", response_model=schemas.SimpleMessage)
+def add_user_to_clinic(
+    payload: schemas.AddToClinicRequest,
+    db: Session = Depends(get_db),
+    clinic_id: int = Depends(get_clinic_id),
+    current_user: models.User = Depends(get_current_user),
+    membership=Depends(require_admin),
+):
+    assert_role_valid(payload.role)
+    if payload.role == "owner" and membership.role != "owner":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only an owner can grant owner access")
+
+    email = payload.email.lower()
+    user = db.query(models.User).filter(models.User.email == email).first()
+
+    if user:
+        existing = db.query(models.ClinicMembership).filter(
+            models.ClinicMembership.user_id == user.id,
+            models.ClinicMembership.clinic_id == clinic_id,
+        ).first()
+        if existing:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="That person already has access to this clinic")
+        db.add(models.ClinicMembership(user_id=user.id, clinic_id=clinic_id, role=payload.role))
+        db.commit()
+        return {"message": f"{user.full_name} now has access to this clinic"}
+
+    if not payload.full_name or not payload.full_name.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This email has no account yet, so a full name is required to create one")
+
+    new_user = models.User(
+        clinic_id=clinic_id,
+        email=email,
+        full_name=payload.full_name.strip(),
+        password_hash=hash_password(generate_reset_token()[0]),
+        role=payload.role,
+        active=True,
+    )
+    db.add(new_user)
+    db.flush()
+    db.add(models.ClinicMembership(user_id=new_user.id, clinic_id=clinic_id, role=payload.role))
+
+    raw_token, token_hash = generate_reset_token()
+    db.add(models.PasswordResetToken(user_id=new_user.id, token_hash=token_hash, expires_at=reset_token_expiry()))
+    db.commit()
+
+    send_invite(new_user.email, new_user.full_name, raw_token, current_user.full_name)
+    return {"message": f"Invited {email} to this clinic"}

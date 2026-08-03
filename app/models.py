@@ -115,3 +115,12 @@ class Appointment(Base):
     status = Column(String, nullable=False, default="scheduled")
     completed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class ClinicMembership(Base):
+    __tablename__ = "clinic_memberships"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    clinic_id = Column(Integer, ForeignKey("clinics.id"), nullable=False)
+    role = Column(String, nullable=False, server_default="staff", default="staff")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

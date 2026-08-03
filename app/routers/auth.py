@@ -71,17 +71,18 @@ def login_form(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = D
 
 @router.get("/me", response_model=schemas.MeOut)
 def read_me(
+    membership: models.ClinicMembership = Depends(get_membership),
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    clinic = db.query(models.Clinic).filter(models.Clinic.id == current_user.clinic_id).first()
+    clinic = db.query(models.Clinic).filter(models.Clinic.id == membership.clinic_id).first()
     return {
         "id": current_user.id,
         "email": current_user.email,
         "full_name": current_user.full_name,
-        "role": current_user.role,
+        "role": membership.role,  # role in the currently selected clinic
         "active": current_user.active,
-        "clinic_id": current_user.clinic_id,
+        "clinic_id": membership.clinic_id,
         "clinic_name": clinic.name if clinic else "",
     }
 
@@ -148,3 +149,23 @@ def reset_password(payload: schemas.ResetPasswordRequest, db: Session = Depends(
 
     db.commit()
     return {"message": "Password updated. You can sign in now."}
+
+@router.get("/my-clinics", response_model=list[schemas.ClinicMembershipOut])
+def my_clinics(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    memberships = db.query(models.ClinicMembership).filter(
+        models.ClinicMembership.user_id == current_user.id
+    ).all()
+    result = []
+    for m in memberships:
+        clinic = db.query(models.Clinic).filter(models.Clinic.id == m.clinic_id).first()
+        if clinic:
+            result.append({
+                "clinic_id": clinic.id,
+                "clinic_name": clinic.name,
+                "role": m.role,
+            })
+    result.sort(key=lambda r: r["clinic_name"].lower())
+    return result
