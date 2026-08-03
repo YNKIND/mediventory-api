@@ -53,6 +53,20 @@ class Item(Base):
     supplier_sku = Column(String, nullable=True)
     unit_cost = Column(Numeric(12, 2), nullable=True)
     active = Column(Boolean, nullable=False, default=True)
+    tracking_mode = Column(String, nullable=False, server_default="quantity", default="quantity")
+
+class ItemLot(Base):
+    __tablename__ = "item_lots"
+
+    id = Column(Integer, primary_key=True, index=True)
+    clinic_id = Column(Integer, ForeignKey("clinics.id"), nullable=False)
+    item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
+    lot_number = Column(String, nullable=False)
+    expiry_date = Column(DateTime(timezone=True), nullable=True)
+    qty_received = Column(Numeric(12, 2), nullable=False)
+    qty_remaining = Column(Numeric(12, 2), nullable=False)
+    received_at = Column(DateTime(timezone=True), server_default=func.now())
+    status = Column(String, nullable=False, server_default="active", default="active")
 
 
 class StockMovement(Base):
@@ -67,6 +81,7 @@ class StockMovement(Base):
     note = Column(String, nullable=True)
     appointment_id = Column(Integer, ForeignKey("appointments.id"), nullable=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    lot_id = Column(Integer, ForeignKey("item_lots.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
