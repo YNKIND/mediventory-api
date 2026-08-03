@@ -345,3 +345,30 @@ class ImportResult(BaseModel):
     created: int
     skipped: int
     problems: list[ImportProblem]
+
+class CategoryConsumption(BaseModel):
+    category: str
+    units: Decimal
+    cost: Decimal
+
+
+class ProviderConsumption(BaseModel):
+    provider: str
+    units: Decimal
+    cost: Decimal
+
+
+class AnalyticsSummary(BaseModel):
+    days: int
+    total_consumption_units: Decimal
+    total_consumption_cost: Decimal
+    by_category: list[CategoryConsumption]
+    by_provider: list[ProviderConsumption]
+
+
+class ProcedureCostRow(BaseModel):
+    procedure_id: int
+    procedure_name: str
+    times_completed: int
+    total_cost: Decimal
+    avg_cost: Decimal
