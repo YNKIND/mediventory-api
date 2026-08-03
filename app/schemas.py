@@ -382,3 +382,6 @@ class AddToClinicRequest(BaseModel):
     email: EmailStr
     full_name: Optional[str] = None
     role: str = "staff"
+
+class CreateClinicRequest(BaseModel):
+    clinic_name: str

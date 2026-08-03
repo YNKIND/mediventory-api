@@ -169,3 +169,20 @@ def my_clinics(
             })
     result.sort(key=lambda r: r["clinic_name"].lower())
     return result
+@router.post("/create-clinic", response_model=schemas.ClinicMembershipOut)
+def create_clinic(
+    payload: schemas.CreateClinicRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    if not payload.clinic_name.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Clinic name is required")
+
+    clinic = models.Clinic(name=payload.clinic_name.strip())
+    db.add(clinic)
+    db.flush()
+
+    db.add(models.ClinicMembership(user_id=current_user.id, clinic_id=clinic.id, role="owner"))
+    db.commit()
+
+    return {"clinic_id": clinic.id, "clinic_name": clinic.name, "role": "owner"}
