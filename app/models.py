@@ -124,3 +124,27 @@ class ClinicMembership(Base):
     clinic_id = Column(Integer, ForeignKey("clinics.id"), nullable=False)
     role = Column(String, nullable=False, server_default="staff", default="staff")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class PurchaseOrder(Base):
+    __tablename__ = "purchase_orders"
+
+    id = Column(Integer, primary_key=True, index=True)
+    clinic_id = Column(Integer, ForeignKey("clinics.id"), nullable=False)
+    supplier_name = Column(String, nullable=True)
+    status = Column(String, nullable=False, server_default="draft", default="draft")
+    note = Column(String, nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    ordered_at = Column(DateTime(timezone=True), nullable=True)
+    received_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class PurchaseOrderLine(Base):
+    __tablename__ = "purchase_order_lines"
+
+    id = Column(Integer, primary_key=True, index=True)
+    purchase_order_id = Column(Integer, ForeignKey("purchase_orders.id"), nullable=False)
+    item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
+    qty_ordered = Column(Numeric(12, 2), nullable=False)
+    qty_received = Column(Numeric(12, 2), nullable=False, server_default="0", default=0)
+    unit_cost = Column(Numeric(12, 2), nullable=True)

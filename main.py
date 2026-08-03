@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import auth, users, items, procedures, appointments, insights, imports, analytics
+from app.routers import auth, users, items, procedures, appointments, insights, imports, analytics, purchase_orders
 
 app = FastAPI(title="Mediventory API")
 
@@ -24,6 +24,7 @@ app.include_router(appointments.router)
 app.include_router(insights.router)
 app.include_router(imports.router)
 app.include_router(analytics.router)
+app.include_router(purchase_orders.router)
 
 @app.get("/")
 def read_root():

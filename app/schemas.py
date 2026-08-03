@@ -385,3 +385,58 @@ class AddToClinicRequest(BaseModel):
 
 class CreateClinicRequest(BaseModel):
     clinic_name: str
+
+class PurchaseOrderLineInput(BaseModel):
+    item_id: int
+    qty_ordered: Decimal
+    unit_cost: Optional[Decimal] = None
+
+
+class PurchaseOrderCreate(BaseModel):
+    supplier_name: Optional[str] = None
+    note: Optional[str] = None
+    lines: list[PurchaseOrderLineInput]
+
+
+class PurchaseOrderReceiveLine(BaseModel):
+    line_id: int
+    qty_received: Decimal
+
+
+class PurchaseOrderReceive(BaseModel):
+    lines: list[PurchaseOrderReceiveLine]
+
+
+class PurchaseOrderLineOut(BaseModel):
+    id: int
+    item_id: int
+    item_name: str
+    unit: str
+    qty_ordered: Decimal
+    qty_received: Decimal
+    qty_remaining: Decimal
+    unit_cost: Optional[Decimal]
+    line_cost: Optional[Decimal]
+
+
+class PurchaseOrderOut(BaseModel):
+    id: int
+    supplier_name: Optional[str]
+    status: str
+    display_status: str
+    note: Optional[str]
+    created_at: datetime
+    ordered_at: Optional[datetime]
+    received_at: Optional[datetime]
+    estimated_total: Decimal
+    lines: list[PurchaseOrderLineOut]
+
+
+class PurchaseOrderSummary(BaseModel):
+    id: int
+    supplier_name: Optional[str]
+    status: str
+    display_status: str
+    created_at: datetime
+    line_count: int
+    estimated_total: Decimal
