@@ -89,17 +89,6 @@ def create_item(
     return item
 
 
-@router.get("", response_model=list[schemas.ItemOut])
-def list_items(
-    include_inactive: bool = False,
-    db: Session = Depends(get_db),
-    clinic_id: int = Depends(get_clinic_id),
-    current_user: models.User = Depends(get_current_user),
-):
-    query = db.query(models.Item).filter(models.Item.clinic_id == clinic_id)
-    if not include_inactive:
-        query = query.filter(models.Item.active == True)
-    return query.order_by(models.Item.name).all()
 
 
 @router.patch("/{item_id}", response_model=schemas.ItemOut)
