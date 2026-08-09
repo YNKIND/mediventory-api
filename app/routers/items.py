@@ -3,6 +3,7 @@ from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
+from sqlalchemy import func as sa_func
 
 from app import models, schemas
 from app.stock import apply_movement
@@ -262,3 +263,48 @@ def restore_item(
     db.commit()
     db.refresh(item)
     return item
+
+
+@router.get("", response_model=list[schemas.ItemOut])
+def list_items(
+    include_inactive: bool = False,
+    db: Session = Depends(get_db),
+    clinic_id: int = Depends(get_clinic_id),
+    current_user: models.User = Depends(get_current_user),
+):
+    query = db.query(models.Item).filter(models.Item.clinic_id == clinic_id)
+    if not include_inactive:
+        query = query.filter(models.Item.active == True)
+    items = query.order_by(models.Item.name).all()
+
+    # Most recent "received" movement per item, for the "recently received" sort.
+    last_received = {}
+    rows = db.query(
+        models.StockMovement.item_id,
+        sa_func.max(models.StockMovement.created_at)
+    ).filter(
+        models.StockMovement.clinic_id == clinic_id,
+        models.StockMovement.reason == "received",
+    ).group_by(models.StockMovement.item_id).all()
+    for item_id, ts in rows:
+        last_received[item_id] = ts
+
+    result = []
+    for item in items:
+        result.append({
+            "id": item.id,
+            "name": item.name,
+            "category": item.category,
+            "unit": item.unit,
+            "pack_unit": item.pack_unit,
+            "pack_size": item.pack_size,
+            "stock_qty": item.stock_qty,
+            "par_level": item.par_level,
+            "reorder_qty": item.reorder_qty,
+            "supplier_name": item.supplier_name,
+            "supplier_sku": item.supplier_sku,
+            "unit_cost": item.unit_cost,
+            "active": item.active,
+            "last_received_at": last_received.get(item.id),
+        })
+    return result
