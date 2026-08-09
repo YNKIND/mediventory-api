@@ -450,3 +450,12 @@ class PurchaseOrderSummary(BaseModel):
     created_at: datetime
     line_count: int
     estimated_total: Decimal
+
+class PurchaseOrderLineEdit(BaseModel):
+    id: Optional[int] = None       # existing line to update, or None to add new
+    item_id: Optional[int] = None  # required when adding a new line
+    qty_ordered: Decimal
+
+
+class PurchaseOrderLinesUpdate(BaseModel):
+    lines: list[PurchaseOrderLineEdit]

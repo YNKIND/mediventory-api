@@ -337,3 +337,69 @@ def delete_po(
     db.delete(po)
     db.commit()
     return {"deleted": True}
+
+@router.patch("/{po_id}/lines", response_model=schemas.PurchaseOrderOut)
+def update_po_lines(
+    po_id: int,
+    payload: schemas.PurchaseOrderLinesUpdate,
+    db: Session = Depends(get_db),
+    clinic_id: int = Depends(get_clinic_id),
+    current_user: models.User = Depends(get_current_user),
+):
+    po = get_clinic_po(db, po_id, clinic_id)
+    if po.status != "draft":
+        raise HTTPException(status_code=400, detail="Only a draft order can be edited. This order has already been placed.")
+
+    existing = {l.id: l for l in db.query(models.PurchaseOrderLine).filter(
+        models.PurchaseOrderLine.purchase_order_id == po.id
+    ).all()}
+
+    # Validate first.
+    seen_items = set()
+    for line in payload.lines:
+        if line.qty_ordered <= 0:
+            raise HTTPException(status_code=400, detail="Order quantity must be greater than zero. Remove the line instead to drop it.")
+
+    keep_ids = set()
+    for line in payload.lines:
+        if line.id is not None:
+            # Update an existing line's quantity.
+            target = existing.get(line.id)
+            if not target:
+                raise HTTPException(status_code=400, detail="A line does not belong to this order")
+            target.qty_ordered = line.qty_ordered
+            keep_ids.add(line.id)
+        else:
+            # Add a new line for an item in this clinic.
+            item = db.query(models.Item).filter(
+                models.Item.id == line.item_id,
+                models.Item.clinic_id == clinic_id,
+            ).first()
+            if not item:
+                raise HTTPException(status_code=400, detail="Item not found in this clinic")
+            if item.id in seen_items:
+                raise HTTPException(status_code=400, detail="The same item appears twice")
+            new_line = models.PurchaseOrderLine(
+                purchase_order_id=po.id,
+                item_id=item.id,
+                qty_ordered=line.qty_ordered,
+                qty_received=0,
+                unit_cost=item.unit_cost,
+            )
+            db.add(new_line)
+        if line.item_id:
+            seen_items.add(line.item_id)
+
+    # Delete any existing line the client dropped (not in keep_ids and had an id).
+    for lid, line in existing.items():
+        if lid not in keep_ids:
+            db.delete(line)
+
+    # A PO must have at least one line.
+    remaining = len(payload.lines)
+    if remaining == 0:
+        raise HTTPException(status_code=400, detail="An order needs at least one line. Cancel the order instead to remove it.")
+
+    db.commit()
+    db.refresh(po)
+    return serialize_po(db, po)
