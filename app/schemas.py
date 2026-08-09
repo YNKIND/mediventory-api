@@ -61,6 +61,7 @@ class ItemOut(BaseModel):
     supplier_sku: Optional[str]
     unit_cost: Optional[Decimal]
     active: bool
+    last_received_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
