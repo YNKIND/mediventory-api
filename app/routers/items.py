@@ -89,8 +89,6 @@ def create_item(
     return item
 
 
-
-
 @router.patch("/{item_id}", response_model=schemas.ItemOut)
 def update_item(
     item_id: int,
