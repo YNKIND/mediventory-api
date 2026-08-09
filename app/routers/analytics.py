@@ -2,6 +2,19 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from collections import defaultdict
 
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.orm import Session
+
+from app import models, schemas
+from app.dependencies import get_db, get_current_user, get_clinic_id
+
+
+router = APIRouter(prefix="/analytics", tags=["analytics"])
+
+
+def parse_range(days: int) -> datetime:
+    return datetime.now(timezone.utc) - timedelta(days=days)
+
 
 @router.get("/trend", response_model=schemas.TrendResponse)
 def usage_trend(
