@@ -459,3 +459,24 @@ class PurchaseOrderLineEdit(BaseModel):
 
 class PurchaseOrderLinesUpdate(BaseModel):
     lines: list[PurchaseOrderLineEdit]
+
+class TrendPoint(BaseModel):
+    week: str
+    units: Decimal
+    cost: Decimal
+
+
+class TrendResponse(BaseModel):
+    days: int
+    scope: str
+    points: list[TrendPoint]
+
+
+class RunoutRow(BaseModel):
+    item_id: int
+    item_name: str
+    clinic_name: str
+    stock_qty: Decimal
+    unit: str
+    avg_daily_usage: Decimal
+    days_left: float
