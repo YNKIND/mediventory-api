@@ -9,6 +9,8 @@ from app.stock import apply_movement
 from app.dependencies import get_db, get_current_user, get_clinic_id, require_admin
 from app.levels import stock_level
 
+from app.email import send_email, email_configured  # adjust to your email module's actual functions
+
 
 router = APIRouter(prefix="/purchase-orders", tags=["purchase-orders"])
 
@@ -400,6 +402,104 @@ def update_po_lines(
     if remaining == 0:
         raise HTTPException(status_code=400, detail="An order needs at least one line. Cancel the order instead to remove it.")
 
+    db.commit()
+    db.refresh(po)
+    return serialize_po(db, po)
+
+
+
+@router.post("/{po_id}/send", response_model=schemas.PurchaseOrderOut)
+def send_po_to_supplier(
+    po_id: int,
+    payload: schemas.SendPORequest,
+    db: Session = Depends(get_db),
+    clinic_id: int = Depends(get_clinic_id),
+    current_user: models.User = Depends(get_current_user),
+):
+    po = get_clinic_po(db, po_id, clinic_id)
+    if po.status not in ("draft", "ordered"):
+        raise HTTPException(status_code=400, detail="Only a draft or ordered order can be emailed to a supplier.")
+
+    to_email = (payload.to_email or "").strip()
+    if not to_email or "@" not in to_email:
+        raise HTTPException(status_code=400, detail="A valid supplier email is required.")
+
+    lines = db.query(models.PurchaseOrderLine).filter(
+        models.PurchaseOrderLine.purchase_order_id == po.id
+    ).all()
+    if not lines:
+        raise HTTPException(status_code=400, detail="This order has no lines to send.")
+
+    clinic = db.query(models.Clinic).filter(models.Clinic.id == clinic_id).first()
+    clinic_label = clinic.name if clinic else "Our clinic"
+
+    row_html = []
+    total = Decimal("0")
+    for ln in lines:
+        item = db.query(models.Item).filter(models.Item.id == ln.item_id).first()
+        name = item.name if item else f"Item {ln.item_id}"
+        unit = item.unit if item else "unit"
+        sku = item.supplier_sku if item and item.supplier_sku else ""
+        cost_cell = ""
+        if ln.unit_cost is not None:
+            line_total = ln.qty_ordered * ln.unit_cost
+            total += line_total
+            cost_cell = f"${ln.unit_cost:.2f}"
+        row_html.append(
+            f"<tr>"
+            f"<td style='padding:8px;border-bottom:1px solid #E4EAF0;'>{name}</td>"
+            f"<td style='padding:8px;border-bottom:1px solid #E4EAF0;'>{sku}</td>"
+            f"<td style='padding:8px;border-bottom:1px solid #E4EAF0;'>{Decimal(ln.qty_ordered)} {unit}</td>"
+            f"<td style='padding:8px;border-bottom:1px solid #E4EAF0;'>{cost_cell}</td>"
+            f"</tr>"
+        )
+
+    note_html = ""
+    if payload.note and payload.note.strip():
+        note_html = f"<p style='margin-top:16px;'>{payload.note.strip()}</p>"
+
+    total_html = ""
+    if total > 0:
+        total_html = f"<p style='margin-top:16px;font-weight:600;'>Estimated total: ${total:.2f}</p>"
+
+    supplier_html = f"<p><strong>Supplier:</strong> {po.supplier_name}</p>" if po.supplier_name else ""
+
+    html = f"""
+    <div style="font-family: Arial, sans-serif; color: #0B1524; line-height: 1.6;">
+      <h2 style="color: #1B69E8;">Purchase order #{po.id}</h2>
+      <p>From <strong>{clinic_label}</strong></p>
+      {supplier_html}
+      <table style="border-collapse: collapse; width: 100%; margin-top: 16px;">
+        <thead>
+          <tr>
+            <th style="text-align:left;padding:8px;border-bottom:2px solid #0B1524;">Item</th>
+            <th style="text-align:left;padding:8px;border-bottom:2px solid #0B1524;">SKU</th>
+            <th style="text-align:left;padding:8px;border-bottom:2px solid #0B1524;">Quantity</th>
+            <th style="text-align:left;padding:8px;border-bottom:2px solid #0B1524;">Unit cost</th>
+          </tr>
+        </thead>
+        <tbody>
+          {''.join(row_html)}
+        </tbody>
+      </table>
+      {total_html}
+      {note_html}
+      <p style="margin-top:24px;font-size:13px;color:#566172;">
+        Please confirm receipt and expected delivery. Reply to this order or contact us at {current_user.email}.
+      </p>
+    </div>
+    """
+
+    subject = f"Purchase order #{po.id} from {clinic_label}"
+    sent = send_email(to_email, subject, html)
+    if not sent:
+        if not email_configured():
+            raise HTTPException(status_code=400, detail="Email is not configured on the server, so the order could not be sent.")
+        raise HTTPException(status_code=502, detail="The email could not be sent. Please try again.")
+
+    if po.status == "draft":
+        po.status = "ordered"
+        po.ordered_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(po)
     return serialize_po(db, po)

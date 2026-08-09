@@ -480,3 +480,7 @@ class RunoutRow(BaseModel):
     unit: str
     avg_daily_usage: Decimal
     days_left: float
+
+class SendPORequest(BaseModel):
+    to_email: str
+    note: Optional[str] = None
