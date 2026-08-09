@@ -358,12 +358,21 @@ class ProviderConsumption(BaseModel):
     cost: Decimal
 
 
+class ClinicConsumption(BaseModel):
+    clinic: str
+    units: Decimal
+    cost: Decimal
+
+
 class AnalyticsSummary(BaseModel):
     days: int
+    scope: str
+    clinic_count: int
     total_consumption_units: Decimal
     total_consumption_cost: Decimal
     by_category: list[CategoryConsumption]
     by_provider: list[ProviderConsumption]
+    by_clinic: list[ClinicConsumption]
 
 
 class ProcedureCostRow(BaseModel):
