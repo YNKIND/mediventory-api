@@ -1,5 +1,6 @@
 import csv
 import io
+import re
 from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
@@ -8,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.dependencies import get_db, get_current_user, get_clinic_id
+from app.stock import apply_movement
 
 
 router = APIRouter(prefix="/imports", tags=["imports"])
@@ -25,7 +27,12 @@ COLUMN_ALIASES = {
     "supplier_name": ["supplier", "supplier name", "vendor"],
     "supplier_sku": ["supplier sku", "sku", "catalog", "catalog number", "item number"],
     "unit_cost": ["unit cost", "cost", "price", "unit price"],
+    "supplier_email": ["supplier email", "email", "order email", "supplier e-mail"],
+    "stock_qty": ["stock", "current stock", "opening stock", "on hand", "in stock",
+                  "quantity", "qty", "count"],
 }
+
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 def map_headers(headers: list[str]) -> dict:
@@ -40,6 +47,17 @@ def map_headers(headers: list[str]) -> dict:
     return mapping
 
 
+def unmapped_headers(headers: list[str], mapping: dict) -> list[str]:
+    """Headers present in the file that we did not recognise, so we can say so."""
+    used = set(mapping.values())
+    out = []
+    for i, raw in enumerate(headers):
+        label = (raw or "").strip()
+        if label and i not in used:
+            out.append(label)
+    return out
+
+
 def parse_decimal(value: str):
     value = (value or "").strip().replace(",", "").replace("$", "")
     if value == "":
@@ -52,7 +70,7 @@ def parse_decimal(value: str):
 
 
 def parse_rows(content: str):
-    """Parse CSV text into (header_mapping, list_of_raw_rows)."""
+    """Parse CSV text into (headers, header_mapping, list_of_raw_rows)."""
     reader = csv.reader(io.StringIO(content))
     rows = list(reader)
     if not rows:
@@ -64,11 +82,11 @@ def parse_rows(content: str):
             status_code=400,
             detail="Could not find a 'Name' column. The file needs at least a column for the item name.",
         )
-    return mapping, rows[1:]
+    return headers, mapping, rows[1:]
 
 
 def build_preview(db: Session, clinic_id: int, content: str) -> dict:
-    mapping, data_rows = parse_rows(content)
+    headers, mapping, data_rows = parse_rows(content)
 
     # Existing active names in this clinic, to catch duplicates against the DB.
     existing_names = {
@@ -110,7 +128,7 @@ def build_preview(db: Session, clinic_id: int, content: str) -> dict:
         # Numeric fields
         numeric = {}
         row_ok = True
-        for field in ["pack_size", "par_level", "reorder_qty", "unit_cost"]:
+        for field in ["pack_size", "par_level", "reorder_qty", "unit_cost", "stock_qty"]:
             parsed = parse_decimal(cell(row, field))
             if parsed == "INVALID":
                 problems.append({"row": n, "issue": f"'{cell(row, field)}' is not a valid number for {field.replace('_', ' ')}"})
@@ -130,6 +148,13 @@ def build_preview(db: Session, clinic_id: int, content: str) -> dict:
             problems.append({"row": n, "issue": f"'{name}' has a pack unit but no valid pack size"})
             continue
 
+        # A malformed supplier email is rejected here rather than failing at send time,
+        # weeks later, when someone is trying to place a real order.
+        supplier_email = cell(row, "supplier_email") or None
+        if supplier_email and not EMAIL_RE.match(supplier_email):
+            problems.append({"row": n, "issue": f"'{supplier_email}' is not a valid email address"})
+            continue
+
         valid.append({
             "name": name,
             "category": cell(row, "category") or None,
@@ -141,7 +166,11 @@ def build_preview(db: Session, clinic_id: int, content: str) -> dict:
             "supplier_name": cell(row, "supplier_name") or None,
             "supplier_sku": cell(row, "supplier_sku") or None,
             "unit_cost": numeric["unit_cost"],
+            "supplier_email": supplier_email,
+            "stock_qty": numeric["stock_qty"] or Decimal("0"),
         })
+
+    ignored = unmapped_headers(headers, mapping)
 
     return {
         "total_rows": len([r for r in data_rows if any((c or "").strip() for c in r)]),
@@ -150,6 +179,7 @@ def build_preview(db: Session, clinic_id: int, content: str) -> dict:
         "valid": valid,
         "problems": problems,
         "detected_columns": sorted(mapping.keys()),
+        "ignored_columns": ignored,
     }
 
 
@@ -189,6 +219,7 @@ async def commit_import(
     preview = build_preview(db, clinic_id, content)
 
     created = 0
+    received = 0
     for spec in preview["valid"]:
         item = models.Item(
             clinic_id=clinic_id,
@@ -201,10 +232,28 @@ async def commit_import(
             reorder_qty=spec["reorder_qty"],
             supplier_name=spec["supplier_name"],
             supplier_sku=spec["supplier_sku"],
+            supplier_email=spec["supplier_email"],
             unit_cost=spec["unit_cost"],
         )
         db.add(item)
         created += 1
+
+        opening = spec["stock_qty"]
+        if opening and opening > 0:
+            # Every item is created at zero and its opening count is recorded as a real
+            # received movement. Writing stock_qty directly would leave stock with no
+            # entry in the ledger explaining where it came from, which is the one
+            # invariant the analytics, variance and runout math all depend on.
+            db.flush()  # the movement needs item.id
+            apply_movement(
+                db,
+                item,
+                change_qty=opening,
+                reason="received",
+                note="Opening count from CSV import",
+                user_id=current_user.id,
+            )
+            received += 1
 
     db.commit()
     return {
