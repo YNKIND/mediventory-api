@@ -12,6 +12,35 @@ from app.dependencies import get_db, get_current_user, get_clinic_id
 router = APIRouter(prefix="/appointments", tags=["appointments"])
 
 
+def _as_utc(dt):
+    """Normalise to an aware UTC datetime.
+
+    Columns may hand back naive datetimes depending on how the type was declared,
+    and comparing a naive datetime with an aware one raises TypeError. Doing this
+    once here keeps the comparison below safe either way.
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def occurred_time(appt: models.Appointment):
+    """When the supplies were actually used, for ledger and analytics purposes.
+
+    This is the appointment's own scheduled time, never the future. Completing an
+    appointment scheduled for next week must not write a movement dated next week,
+    because the analytics filter on a lookback window and the row would silently
+    disappear from every chart.
+    """
+    now = datetime.now(timezone.utc)
+    scheduled = _as_utc(appt.scheduled_at)
+    if scheduled is None:
+        return now
+    return min(scheduled, now)
+
+
 def get_clinic_appt(db: Session, appointment_id: int, clinic_id: int) -> models.Appointment:
     appt = db.query(models.Appointment).filter(
         models.Appointment.id == appointment_id,
@@ -185,17 +214,29 @@ def complete_appointment(
         expected = line.expected_qty if line.expected_qty is not None else expected_map.get(item.id)
         resolved.append((item, line.actual_qty, expected))
 
+    # The supplies were consumed at the appointment, not at the moment someone got
+    # round to clicking Complete. Dating the movements to the appointment is what
+    # makes the weekly trend, the runout projection and cost per procedure line up
+    # with the days the clinic actually worked.
+    now = datetime.now(timezone.utc)
+    occurred_at = occurred_time(appt)
+    backdated = (now - occurred_at).total_seconds() > 60
+    note = f"Appointment #{appt.id}"
+    if backdated:
+        note = f"{note} (recorded {now.date().isoformat()})"
+
     for item, actual_qty, expected in resolved:
         if actual_qty == 0:
             continue
         apply_movement(
             db, item, -actual_qty, reason="procedure",
-            note=f"Appointment #{appt.id}", appointment_id=appt.id,
+            note=note, appointment_id=appt.id,
             user_id=current_user.id, expected_qty=expected,
+            occurred_at=occurred_at,
         )
 
     appt.status = "completed"
-    appt.completed_at = datetime.now(timezone.utc)
+    appt.completed_at = occurred_at
     db.commit()
     db.refresh(appt)
     return appt
@@ -227,6 +268,11 @@ def uncomplete_appointment(
     for mv in reversal_moves:
         net_by_item[mv.item_id] = net_by_item.get(mv.item_id, Decimal("0")) + mv.change_qty
 
+    # A reversal is deliberately NOT backdated. Someone is correcting a record
+    # today, and dating the reversal back to the appointment would net it against
+    # the original inside the same weekly bucket, erasing any evidence that the
+    # correction happened. Stock returning to the shelf is a real event with its
+    # own date.
     for item_id, net in net_by_item.items():
         if net == 0:
             continue
