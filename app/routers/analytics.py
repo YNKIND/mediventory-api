@@ -11,6 +11,8 @@ from app.dependencies import get_db, get_current_user, get_clinic_id
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
+TOTAL_SERIES_LABEL = "All clinics"
+
 
 def parse_range(days: int) -> datetime:
     return datetime.now(timezone.utc) - timedelta(days=days)
@@ -49,6 +51,11 @@ def resolve_clinic_ids(db: Session, current_user: models.User, scope: str, singl
 def clinic_names(db: Session, clinic_ids: list[int]) -> dict:
     rows = db.query(models.Clinic).filter(models.Clinic.id.in_(clinic_ids)).all()
     return {c.id: c.name for c in rows}
+
+
+def week_key(dt) -> str:
+    """The Monday of the week a movement falls in, as an ISO date string."""
+    return (dt - timedelta(days=dt.weekday())).date().isoformat()
 
 
 @router.get("/summary", response_model=schemas.AnalyticsSummary)
@@ -239,8 +246,10 @@ def usage_trend(
         for it in db.query(models.Item).filter(models.Item.id.in_(item_ids)).all():
             items[it.id] = it
 
-    # Bucket by week (Monday), summing units and cost.
+    # Bucket by week (Monday), summing units and cost, both overall and per clinic.
     weekly = defaultdict(lambda: {"units": Decimal("0"), "cost": Decimal("0")})
+    per_clinic = defaultdict(lambda: defaultdict(lambda: {"units": Decimal("0"), "cost": Decimal("0")}))
+
     for mv in movements:
         used = -mv.change_qty
         if used <= 0:
@@ -249,17 +258,52 @@ def usage_trend(
         if not it:
             continue
         cost = (used * it.unit_cost) if it.unit_cost is not None else Decimal("0")
-        d = mv.created_at
-        monday = (d - timedelta(days=d.weekday())).date()
-        key = monday.isoformat()
+        key = week_key(mv.created_at)
+
         weekly[key]["units"] += used
         weekly[key]["cost"] += cost
 
+        bucket = per_clinic[mv.clinic_id][key]
+        bucket["units"] += used
+        bucket["cost"] += cost
+
+    all_weeks = sorted(weekly.keys())
+
     points = [
-        {"week": k, "units": v["units"], "cost": v["cost"].quantize(Decimal("0.01"))}
-        for k, v in sorted(weekly.items())
+        {"week": k, "units": weekly[k]["units"], "cost": weekly[k]["cost"].quantize(Decimal("0.01"))}
+        for k in all_weeks
     ]
-    return {"days": days, "scope": scope, "points": points}
+
+    # A single clinic needs no breakdown, and one line labelled with its own name
+    # next to an identical total line would just be noise.
+    if len(clinic_ids) <= 1:
+        return {"days": days, "scope": scope, "points": points, "series": None}
+
+    cnames = clinic_names(db, clinic_ids)
+
+    # The total goes first so the frontend paints it in the primary colour and
+    # renders it thicker than the per clinic lines.
+    series = [{"clinic": TOTAL_SERIES_LABEL, "points": points}]
+
+    # Every clinic the user manages appears, including ones with no usage in the
+    # window. A clinic that did nothing is a real and useful thing to see, and
+    # dropping it would make the legend disagree with the clinic switcher.
+    for cid in sorted(clinic_ids, key=lambda c: cnames.get(c, f"Clinic {c}").lower()):
+        buckets = per_clinic.get(cid, {})
+        # Zero fill missing weeks. Without this a clinic that was quiet for a week
+        # would have its line drawn straight across the gap, which reads as steady
+        # usage rather than none.
+        cpoints = []
+        for k in all_weeks:
+            b = buckets.get(k)
+            cpoints.append({
+                "week": k,
+                "units": b["units"] if b else Decimal("0"),
+                "cost": (b["cost"] if b else Decimal("0")).quantize(Decimal("0.01")),
+            })
+        series.append({"clinic": cnames.get(cid, f"Clinic {cid}"), "points": cpoints})
+
+    return {"days": days, "scope": scope, "points": points, "series": series}
 
 
 @router.get("/runout", response_model=list[schemas.RunoutRow])

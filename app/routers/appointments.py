@@ -236,7 +236,7 @@ def complete_appointment(
         )
 
     appt.status = "completed"
-    appt.completed_at = occurred_at
+    appt.completed_at = now
     db.commit()
     db.refresh(appt)
     return appt
