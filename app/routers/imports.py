@@ -261,3 +261,239 @@ async def commit_import(
         "skipped": preview["problem_count"],
         "problems": preview["problems"],
     }
+
+
+# ---------------------------------------------------------------------------
+# Procedure import
+#
+# One CSV row is one supply line. Each line becomes its own ProcedureSupply row,
+# never merged with another. Rows are grouped into procedures by procedure name.
+# ---------------------------------------------------------------------------
+
+PROC_COLUMN_ALIASES = {
+    "procedure_name": ["procedure", "procedure name", "procedure_name", "name", "treatment"],
+    "procedure_code": ["code", "procedure code", "procedure_code", "cdt", "cdt code"],
+    "item_name": ["item", "item name", "item_name", "supply", "supply item", "product", "material"],
+    "qty": ["qty", "quantity", "qty per procedure", "qty_per_procedure", "quantity per procedure",
+            "qty per case", "amount", "used"],
+}
+
+
+def map_proc_headers(headers: list[str]) -> dict:
+    mapping = {}
+    for i, raw in enumerate(headers):
+        key = (raw or "").strip().lower()
+        for canonical, aliases in PROC_COLUMN_ALIASES.items():
+            if key in aliases:
+                mapping[canonical] = i
+                break
+    return mapping
+
+
+def parse_proc_rows(content: str):
+    reader = csv.reader(io.StringIO(content))
+    rows = list(reader)
+    if not rows:
+        raise HTTPException(status_code=400, detail="The file is empty.")
+    headers = rows[0]
+    mapping = map_proc_headers(headers)
+    missing = [c for c in ("procedure_name", "item_name", "qty") if c not in mapping]
+    if missing:
+        pretty = {"procedure_name": "Procedure", "item_name": "Item", "qty": "Qty"}
+        raise HTTPException(
+            status_code=400,
+            detail="Could not find a column for: "
+                   + ", ".join(pretty[m] for m in missing)
+                   + ". The file needs one row per supply line, with a procedure name, an item name and a quantity.",
+        )
+    return headers, mapping, rows[1:]
+
+
+def build_procedure_preview(db: Session, clinic_id: int, content: str) -> dict:
+    headers, mapping, data_rows = parse_proc_rows(content)
+
+    # Active items in this clinic, matched case insensitively by name.
+    items = db.query(models.Item).filter(
+        models.Item.clinic_id == clinic_id,
+        models.Item.active == True,
+    ).all()
+    items_by_name = {i.name.strip().lower(): i for i in items}
+
+    existing_procs = {
+        p[0].strip().lower()
+        for p in db.query(models.Procedure.name).filter(
+            models.Procedure.clinic_id == clinic_id,
+            models.Procedure.active == True,
+        ).all()
+    }
+
+    def cell(row, key):
+        idx = mapping.get(key)
+        if idx is None or idx >= len(row):
+            return ""
+        return (row[idx] or "").strip()
+
+    # Group rows into procedures, keeping the order they first appear in the file.
+    grouped = {}   # lower name -> dict
+    problems = []
+    missing_items = set()
+    total_lines = 0
+
+    for n, row in enumerate(data_rows, start=2):
+        if not any((c or "").strip() for c in row):
+            continue
+
+        proc_name = cell(row, "procedure_name")
+        if not proc_name:
+            problems.append({"row": n, "issue": "Missing procedure name"})
+            continue
+
+        key = proc_name.lower()
+        if key not in grouped:
+            grouped[key] = {
+                "name": proc_name,
+                "code": cell(row, "procedure_code") or None,
+                "lines": [],
+                "blocked": None,
+                "seen_items": set(),
+            }
+            if key in existing_procs:
+                grouped[key]["blocked"] = f"'{proc_name}' already exists in this clinic"
+        group = grouped[key]
+        if group["code"] is None and cell(row, "procedure_code"):
+            group["code"] = cell(row, "procedure_code")
+
+        total_lines += 1
+
+        item_name = cell(row, "item_name")
+        if not item_name:
+            problems.append({"row": n, "issue": f"'{proc_name}': missing item name"})
+            group["blocked"] = group["blocked"] or "One or more supply lines are invalid"
+            continue
+
+        qty = parse_decimal(cell(row, "qty"))
+        if qty == "INVALID":
+            problems.append({"row": n, "issue": f"'{item_name}': '{cell(row, 'qty')}' is not a valid quantity"})
+            group["blocked"] = group["blocked"] or "One or more supply lines are invalid"
+            continue
+        if qty is None or qty <= 0:
+            problems.append({"row": n, "issue": f"'{item_name}': quantity must be greater than zero"})
+            group["blocked"] = group["blocked"] or "One or more supply lines are invalid"
+            continue
+
+        item = items_by_name.get(item_name.lower())
+        if item is None:
+            problems.append({"row": n, "issue": f"'{item_name}' is not in this clinic's inventory"})
+            missing_items.add(item_name)
+            group["blocked"] = group["blocked"] or "One or more supply items are not in inventory"
+            continue
+
+        if item.id in group["seen_items"]:
+            problems.append({"row": n, "issue": f"'{proc_name}': '{item_name}' appears more than once"})
+            group["blocked"] = group["blocked"] or "One or more supply lines are duplicated"
+            continue
+        group["seen_items"].add(item.id)
+
+        # One CSV row, one supply line, one ProcedureSupply row on commit.
+        group["lines"].append({
+            "item_id": item.id,
+            "item_name": item.name,
+            "unit": item.unit,
+            "qty_per_procedure": qty,
+        })
+
+    valid = []
+    skipped = []
+    for group in grouped.values():
+        if group["blocked"]:
+            skipped.append({"name": group["name"], "reason": group["blocked"]})
+            continue
+        if not group["lines"]:
+            skipped.append({"name": group["name"], "reason": "No usable supply lines"})
+            continue
+        valid.append({
+            "name": group["name"],
+            "code": group["code"],
+            "line_count": len(group["lines"]),
+            "lines": group["lines"],
+        })
+
+    return {
+        "total_rows": total_lines,
+        "procedure_count": len(valid),
+        "line_count": sum(p["line_count"] for p in valid),
+        "valid": valid,
+        "skipped_procedures": skipped,
+        "problem_count": len(problems),
+        "problems": problems,
+        "missing_items": sorted(missing_items),
+        "detected_columns": sorted(mapping.keys()),
+        "ignored_columns": unmapped_headers(headers, mapping),
+    }
+
+
+async def _read_upload(file: UploadFile) -> str:
+    if not file.filename.lower().endswith((".csv", ".txt")):
+        raise HTTPException(status_code=400, detail="Please upload a .csv file.")
+    raw = await file.read()
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            return raw.decode("latin-1")
+        except Exception:
+            raise HTTPException(status_code=400, detail="Could not read the file. Save it as UTF-8 CSV and try again.")
+
+
+@router.post("/procedures/preview", response_model=schemas.ProcedureImportPreview)
+async def preview_procedure_import(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    clinic_id: int = Depends(get_clinic_id),
+    current_user: models.User = Depends(get_current_user),
+):
+    content = await _read_upload(file)
+    return build_procedure_preview(db, clinic_id, content)
+
+
+@router.post("/procedures/commit", response_model=schemas.ProcedureImportResult)
+async def commit_procedure_import(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    clinic_id: int = Depends(get_clinic_id),
+    current_user: models.User = Depends(get_current_user),
+):
+    content = await _read_upload(file)
+    preview = build_procedure_preview(db, clinic_id, content)
+
+    created_procedures = 0
+    created_lines = 0
+    for spec in preview["valid"]:
+        procedure = models.Procedure(
+            clinic_id=clinic_id,
+            name=spec["name"],
+            code=spec["code"],
+            active=True,
+        )
+        db.add(procedure)
+        db.flush()  # the supply rows need procedure.id
+
+        # Each consumed item is added as its own ProcedureSupply row.
+        for line in spec["lines"]:
+            db.add(models.ProcedureSupply(
+                procedure_id=procedure.id,
+                item_id=line["item_id"],
+                qty_per_procedure=line["qty_per_procedure"],
+            ))
+            created_lines += 1
+
+        created_procedures += 1
+
+    db.commit()
+    return {
+        "created_procedures": created_procedures,
+        "created_lines": created_lines,
+        "skipped_procedures": len(preview["skipped_procedures"]),
+        "problems": preview["problems"],
+        "missing_items": preview["missing_items"],
+    }

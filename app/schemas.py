@@ -35,6 +35,7 @@ class ItemCreate(BaseModel):
     supplier_email: Optional[str] = None
     auto_reorder: Optional[bool] = False
 
+
 class ItemUpdate(BaseModel):
     name: Optional[str] = None
     category: Optional[str] = None
@@ -48,6 +49,7 @@ class ItemUpdate(BaseModel):
     unit_cost: Optional[Decimal] = None
     supplier_email: Optional[str] = None
     auto_reorder: Optional[bool] = None
+
 
 class ItemOut(BaseModel):
     id: int
@@ -71,26 +73,10 @@ class ItemOut(BaseModel):
         from_attributes = True
 
 
-class NewItemInline(BaseModel):
-    name: str
-    category: Optional[str] = None
-    unit: Optional[str] = "unit"
-    pack_unit: Optional[str] = None
-    pack_size: Optional[Decimal] = Decimal("1")
-    par_level: Optional[Decimal] = Decimal("0")
-    reorder_qty: Optional[Decimal] = Decimal("0")
-    supplier_name: Optional[str] = None
-    supplier_sku: Optional[str] = None
-    unit_cost: Optional[Decimal] = None
-
-
-
 class StockChange(BaseModel):
     change_qty: Decimal
     note: Optional[str] = None
     as_packs: bool = False
-
-
 
 
 class ProcedureCreate(BaseModel):
@@ -125,6 +111,9 @@ class SupplyLineOut(BaseModel):
     qty_per_procedure: Decimal
 
 
+# Single definition. This file previously declared NewItemInline twice; the second,
+# shorter one silently won, so inline item creation could not carry supplier fields.
+# The extra fields below are optional, so nothing that already worked changes.
 class NewItemInline(BaseModel):
     name: str
     category: Optional[str] = None
@@ -133,6 +122,9 @@ class NewItemInline(BaseModel):
     pack_size: Optional[Decimal] = Decimal("1")
     par_level: Optional[Decimal] = Decimal("0")
     reorder_qty: Optional[Decimal] = Decimal("0")
+    supplier_name: Optional[str] = None
+    supplier_sku: Optional[str] = None
+    unit_cost: Optional[Decimal] = None
 
 
 class SupplyInput(BaseModel):
@@ -229,12 +221,14 @@ class MovementOut(BaseModel):
     class Config:
         from_attributes = True
 
+
 class DashboardSummary(BaseModel):
     total_items: int
     low_count: int
     critical_count: int
     appointments_today: int
     completed_today: int
+
 
 class UserOut(BaseModel):
     id: int
@@ -278,6 +272,7 @@ class ResetPasswordRequest(BaseModel):
 class SimpleMessage(BaseModel):
     message: str
 
+
 class CompletionDraftLine(BaseModel):
     item_id: int
     item_name: str
@@ -303,6 +298,7 @@ class ConfirmedLine(BaseModel):
 class CompleteRequest(BaseModel):
     lines: list[ConfirmedLine]
 
+
 class RegisterRequest(BaseModel):
     clinic_name: str
     email: EmailStr
@@ -318,6 +314,11 @@ class MeOut(BaseModel):
     active: bool
     clinic_id: int
     clinic_name: str
+
+
+# ---------------------------------------------------------------------------
+# Item import
+# ---------------------------------------------------------------------------
 
 class ImportProblem(BaseModel):
     row: int
@@ -335,6 +336,8 @@ class ImportPreviewItem(BaseModel):
     supplier_name: Optional[str]
     supplier_sku: Optional[str]
     unit_cost: Optional[Decimal]
+    supplier_email: Optional[str] = None
+    stock_qty: Decimal = Decimal("0")
 
 
 class ImportPreview(BaseModel):
@@ -344,12 +347,64 @@ class ImportPreview(BaseModel):
     valid: list[ImportPreviewItem]
     problems: list[ImportProblem]
     detected_columns: list[str]
+    ignored_columns: list[str] = []
 
 
 class ImportResult(BaseModel):
     created: int
     skipped: int
     problems: list[ImportProblem]
+
+
+# ---------------------------------------------------------------------------
+# Procedure import
+#
+# One CSV row is one supply line, and each becomes its own ProcedureSupply row.
+# ---------------------------------------------------------------------------
+
+class ProcedureImportLine(BaseModel):
+    item_id: int
+    item_name: str
+    unit: str
+    qty_per_procedure: Decimal
+
+
+class ProcedureImportPreviewItem(BaseModel):
+    name: str
+    code: Optional[str] = None
+    line_count: int
+    lines: list[ProcedureImportLine]
+
+
+class SkippedProcedure(BaseModel):
+    name: str
+    reason: str
+
+
+class ProcedureImportPreview(BaseModel):
+    total_rows: int
+    procedure_count: int
+    line_count: int
+    valid: list[ProcedureImportPreviewItem]
+    skipped_procedures: list[SkippedProcedure] = []
+    problem_count: int
+    problems: list[ImportProblem]
+    missing_items: list[str] = []
+    detected_columns: list[str]
+    ignored_columns: list[str] = []
+
+
+class ProcedureImportResult(BaseModel):
+    created_procedures: int
+    created_lines: int
+    skipped_procedures: int
+    problems: list[ImportProblem]
+    missing_items: list[str] = []
+
+
+# ---------------------------------------------------------------------------
+# Analytics
+# ---------------------------------------------------------------------------
 
 class CategoryConsumption(BaseModel):
     category: str
@@ -387,18 +442,26 @@ class ProcedureCostRow(BaseModel):
     total_cost: Decimal
     avg_cost: Decimal
 
+
 class ClinicMembershipOut(BaseModel):
     clinic_id: int
     clinic_name: str
     role: str
+
 
 class AddToClinicRequest(BaseModel):
     email: EmailStr
     full_name: Optional[str] = None
     role: str = "staff"
 
+
 class CreateClinicRequest(BaseModel):
     clinic_name: str
+
+
+# ---------------------------------------------------------------------------
+# Purchase orders
+# ---------------------------------------------------------------------------
 
 class PurchaseOrderLineInput(BaseModel):
     item_id: int
@@ -455,6 +518,7 @@ class PurchaseOrderSummary(BaseModel):
     line_count: int
     estimated_total: Decimal
 
+
 class PurchaseOrderLineEdit(BaseModel):
     id: Optional[int] = None       # existing line to update, or None to add new
     item_id: Optional[int] = None  # required when adding a new line
@@ -463,6 +527,11 @@ class PurchaseOrderLineEdit(BaseModel):
 
 class PurchaseOrderLinesUpdate(BaseModel):
     lines: list[PurchaseOrderLineEdit]
+
+
+# ---------------------------------------------------------------------------
+# Trends and runout
+# ---------------------------------------------------------------------------
 
 class TrendPoint(BaseModel):
     week: str
@@ -481,6 +550,7 @@ class TrendResponse(BaseModel):
     points: list[TrendPoint]
     series: Optional[list[TrendSeries]] = None
 
+
 class RunoutRow(BaseModel):
     item_id: int
     item_name: str
@@ -489,6 +559,7 @@ class RunoutRow(BaseModel):
     unit: str
     avg_daily_usage: Decimal
     days_left: float
+
 
 class SendPORequest(BaseModel):
     to_email: str
