@@ -44,6 +44,14 @@ def register(payload: schemas.RegisterRequest, db: Session = Depends(get_db)):
         active=True,
     )
     db.add(user)
+    db.flush()
+
+    # The membership row is what get_membership resolves against, and it is the
+    # single security checkpoint for every clinic scoped endpoint. Without it the
+    # new owner has a clinic_id but no verifiable membership, so /auth/me and
+    # everything after it return 403.
+    db.add(models.ClinicMembership(user_id=user.id, clinic_id=clinic.id, role="owner"))
+
     db.commit()
     db.refresh(user)
     return user
@@ -150,6 +158,7 @@ def reset_password(payload: schemas.ResetPasswordRequest, db: Session = Depends(
     db.commit()
     return {"message": "Password updated. You can sign in now."}
 
+
 @router.get("/my-clinics", response_model=list[schemas.ClinicMembershipOut])
 def my_clinics(
     current_user: models.User = Depends(get_current_user),
@@ -169,6 +178,8 @@ def my_clinics(
             })
     result.sort(key=lambda r: r["clinic_name"].lower())
     return result
+
+
 @router.post("/create-clinic", response_model=schemas.ClinicMembershipOut)
 def create_clinic(
     payload: schemas.CreateClinicRequest,
