@@ -32,7 +32,8 @@ class ItemCreate(BaseModel):
     supplier_name: Optional[str] = None
     supplier_sku: Optional[str] = None
     unit_cost: Optional[Decimal] = None
-
+    supplier_email: Optional[str] = None
+    auto_reorder: Optional[bool] = False
 
 class ItemUpdate(BaseModel):
     name: Optional[str] = None
@@ -45,7 +46,8 @@ class ItemUpdate(BaseModel):
     supplier_name: Optional[str] = None
     supplier_sku: Optional[str] = None
     unit_cost: Optional[Decimal] = None
-
+    supplier_email: Optional[str] = None
+    auto_reorder: Optional[bool] = None
 
 class ItemOut(BaseModel):
     id: int
@@ -60,6 +62,8 @@ class ItemOut(BaseModel):
     supplier_name: Optional[str]
     supplier_sku: Optional[str]
     unit_cost: Optional[Decimal]
+    supplier_email: Optional[str] = None
+    auto_reorder: bool = False
     active: bool
     last_received_at: Optional[datetime] = None
 
@@ -466,11 +470,16 @@ class TrendPoint(BaseModel):
     cost: Decimal
 
 
+class TrendSeries(BaseModel):
+    clinic: str
+    points: list[TrendPoint]
+
+
 class TrendResponse(BaseModel):
     days: int
     scope: str
     points: list[TrendPoint]
-
+    series: Optional[list[TrendSeries]] = None
 
 class RunoutRow(BaseModel):
     item_id: int

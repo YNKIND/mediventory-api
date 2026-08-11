@@ -51,6 +51,27 @@ def assert_name_free(db: Session, name: str, clinic_id: int, exclude_id: int | N
         )
 
 
+def serialize_item(item: models.Item, last_received_at=None) -> dict:
+    return {
+        "id": item.id,
+        "name": item.name,
+        "category": item.category,
+        "unit": item.unit,
+        "pack_unit": item.pack_unit,
+        "pack_size": item.pack_size,
+        "stock_qty": item.stock_qty,
+        "par_level": item.par_level,
+        "reorder_qty": item.reorder_qty,
+        "supplier_name": item.supplier_name,
+        "supplier_sku": item.supplier_sku,
+        "supplier_email": item.supplier_email,
+        "auto_reorder": item.auto_reorder,
+        "unit_cost": item.unit_cost,
+        "active": item.active,
+        "last_received_at": last_received_at,
+    }
+
+
 @router.post("", response_model=schemas.ItemOut)
 def create_item(
     payload: schemas.ItemCreate,
@@ -81,12 +102,14 @@ def create_item(
         reorder_qty=payload.reorder_qty or Decimal("0"),
         supplier_name=(payload.supplier_name or "").strip() or None,
         supplier_sku=(payload.supplier_sku or "").strip() or None,
+        supplier_email=(payload.supplier_email or "").strip() or None,
+        auto_reorder=bool(payload.auto_reorder),
         unit_cost=payload.unit_cost,
     )
     db.add(item)
     db.commit()
     db.refresh(item)
-    return item
+    return serialize_item(item)
 
 
 @router.patch("/{item_id}", response_model=schemas.ItemOut)
@@ -127,6 +150,10 @@ def update_item(
         item.supplier_name = payload.supplier_name.strip() or None
     if payload.supplier_sku is not None:
         item.supplier_sku = payload.supplier_sku.strip() or None
+    if payload.supplier_email is not None:
+        item.supplier_email = payload.supplier_email.strip() or None
+    if payload.auto_reorder is not None:
+        item.auto_reorder = bool(payload.auto_reorder)
     if payload.unit_cost is not None:
         if payload.unit_cost < 0:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unit cost cannot be negative")
@@ -140,7 +167,7 @@ def update_item(
 
     db.commit()
     db.refresh(item)
-    return item
+    return serialize_item(item)
 
 
 @router.post("/{item_id}/receive", response_model=schemas.ItemOut)
@@ -162,7 +189,7 @@ def receive_stock(
     if payload.note:
         note = f"{note}. {payload.note}"
     apply_movement(db, item, qty, reason="received", note=note, user_id=current_user.id)
-    return item
+    return serialize_item(item)
 
 
 @router.post("/{item_id}/adjust", response_model=schemas.ItemOut)
@@ -190,7 +217,7 @@ def adjust_stock(
     if payload.note:
         note = f"{note}. {payload.note}"
     apply_movement(db, item, qty, reason="correction", note=note, user_id=current_user.id)
-    return item
+    return serialize_item(item)
 
 
 @router.get("/{item_id}/movements", response_model=list[schemas.MovementOut])
@@ -234,7 +261,7 @@ def deactivate_item(
     item.active = False
     db.commit()
     db.refresh(item)
-    return item
+    return serialize_item(item)
 
 
 @router.post("/{item_id}/restore", response_model=schemas.ItemOut)
@@ -249,7 +276,7 @@ def restore_item(
     item.active = True
     db.commit()
     db.refresh(item)
-    return item
+    return serialize_item(item)
 
 
 @router.get("", response_model=list[schemas.ItemOut])
@@ -276,22 +303,4 @@ def list_items(
     for item_id, ts in rows:
         last_received[item_id] = ts
 
-    result = []
-    for item in items:
-        result.append({
-            "id": item.id,
-            "name": item.name,
-            "category": item.category,
-            "unit": item.unit,
-            "pack_unit": item.pack_unit,
-            "pack_size": item.pack_size,
-            "stock_qty": item.stock_qty,
-            "par_level": item.par_level,
-            "reorder_qty": item.reorder_qty,
-            "supplier_name": item.supplier_name,
-            "supplier_sku": item.supplier_sku,
-            "unit_cost": item.unit_cost,
-            "active": item.active,
-            "last_received_at": last_received.get(item.id),
-        })
-    return result
+    return [serialize_item(item, last_received.get(item.id)) for item in items]

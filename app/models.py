@@ -51,9 +51,12 @@ class Item(Base):
     reorder_qty = Column(Numeric(12, 2), nullable=False, default=0)
     supplier_name = Column(String, nullable=True)
     supplier_sku = Column(String, nullable=True)
+    supplier_email = Column(String, nullable=True)
+    auto_reorder = Column(Boolean, nullable=False, server_default="false", default=False)
     unit_cost = Column(Numeric(12, 2), nullable=True)
     active = Column(Boolean, nullable=False, default=True)
     tracking_mode = Column(String, nullable=False, server_default="quantity", default="quantity")
+
 
 class ItemLot(Base):
     __tablename__ = "item_lots"
@@ -116,6 +119,7 @@ class Appointment(Base):
     completed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+
 class ClinicMembership(Base):
     __tablename__ = "clinic_memberships"
 
@@ -124,6 +128,7 @@ class ClinicMembership(Base):
     clinic_id = Column(Integer, ForeignKey("clinics.id"), nullable=False)
     role = Column(String, nullable=False, server_default="staff", default="staff")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
 
 class PurchaseOrder(Base):
     __tablename__ = "purchase_orders"
